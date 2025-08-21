@@ -38,6 +38,9 @@ var float initBreakDownHigh      = na    // for Break/Trap short SL
 var bool  trapUpRetestedInside   = false
 var bool  trapDownRetestedInside = false
 var bool  tradedToday            = false
+// Prevent multiple TRAP entries from the same break/retest sequence
+var bool  trapUpConsumed         = false
+var bool  trapDownConsumed       = false
 
 // Reset daily state at midnight (chart timezone)
 if newDay
@@ -51,6 +54,8 @@ if newDay
     trapUpRetestedInside := false
     trapDownRetestedInside := false
     tradedToday := false
+    trapUpConsumed := false
+    trapDownConsumed := false
 
 // Pull the 5-minute bar that STARTS at 9:30 (value available on its close at 9:35)
 sess0930Hi = request.security(syminfo.tickerid, "5", (hour == 9 and minute == 30) ? high : na, barmerge.gaps_off, barmerge.lookahead_off)
@@ -69,6 +74,8 @@ if not haveRange and not na(sess0930Hi) and not na(sess0930Lo)
     trapUpRetestedInside := false
     trapDownRetestedInside := false
     tradedToday := false
+    trapUpConsumed := false
+    trapDownConsumed := false
 
 // -------------------- Visuals
 plot(showRange and haveRange ? rangeHi : na, "Range High", color=color.new(color.teal, 0), style=plot.style_linebr, linewidth=2)
@@ -88,10 +95,14 @@ if haveRange and inWindow and not tradedToday
         breakUpFound := true
         initBreakUpLow := low
         trapUpRetestedInside := false
+        // re-arm long trap on a fresh break
+        trapUpConsumed := false
     if not breakDownFound and closeBelow
         breakDownFound := true
         initBreakDownHigh := high
         trapDownRetestedInside := false
+        // re-arm short trap on a fresh break
+        trapDownConsumed := false
 
 // Trap retest flags (retest back inside after first break)
 if haveRange and inWindow and not tradedToday
@@ -159,7 +170,7 @@ if enableBreak and allowEntry
 // -------------------- TRAP Entries (Break → Retest inside → Reclose outside; FVG not required)
 if enableTrap and allowEntry
     // Long TRAP
-    if breakUpFound and trapUpRetestedInside and closeAbove
+    if breakUpFound and trapUpRetestedInside and closeAbove and not trapUpConsumed
         stopL  = na(initBreakUpLow) ? low : initBreakUpLow
         entryL = close
         if entryL > stopL
@@ -169,8 +180,11 @@ if enableTrap and allowEntry
                 strategy.entry("LONG_TRAP", strategy.long, qty=qtyL)
                 strategy.exit("LONG_TRAP_TP/SL", from_entry="LONG_TRAP", stop=stopL, limit=tpL)
                 tradedToday := oneTradePerDay ? true : tradedToday
+                trapUpConsumed := true
+                // Disarm until a fresh retest back inside occurs
+                trapUpRetestedInside := false
     // Short TRAP
-    if breakDownFound and trapDownRetestedInside and closeBelow
+    if breakDownFound and trapDownRetestedInside and closeBelow and not trapDownConsumed
         stopS  = na(initBreakDownHigh) ? high : initBreakDownHigh
         entryS = close
         if entryS < stopS
@@ -180,6 +194,9 @@ if enableTrap and allowEntry
                 strategy.entry("SHORT_TRAP", strategy.short, qty=qtyS)
                 strategy.exit("SHORT_TRAP_TP/SL", from_entry="SHORT_TRAP", stop=stopS, limit=tpS)
                 tradedToday := oneTradePerDay ? true : tradedToday
+                trapDownConsumed := true
+                // Disarm until a fresh retest back inside occurs
+                trapDownRetestedInside := false
 
 // -------------------- REVERSAL Entries (Failed break + opposite FVG back into range)
 if enableReversal and allowEntry
