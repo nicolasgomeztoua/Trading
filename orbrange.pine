@@ -9,6 +9,8 @@ enableReversal = input.bool(true, "Enable Reversal Entry")
 rr             = input.float(2.0,  "Take-Profit R Multiple", step=0.25, minval=0.25)
 oneTradePerDay = input.bool(false,  "One Trade Per Day")
 showRange      = input.bool(true,  "Show 9:30 5m Range")
+showSL         = input.bool(true,  "Show Stop Loss Line")
+showTP         = input.bool(true,  "Show Take Profit Line")
 
 // Risk management
 riskPct        = input.float(1.0,  "Risk % of Equity per Trade", step=0.1, minval=0.1, maxval=100.0)
@@ -41,6 +43,15 @@ var bool  tradedToday            = false
 // Prevent multiple TRAP entries from the same break/retest sequence
 var bool  trapUpConsumed         = false
 var bool  trapDownConsumed       = false
+// Active TP/SL levels for plotting
+var float activeSL = na
+var float activeTP = na
+// Prevent multiple BREAK entries per direction per day
+var bool  breakLongConsumed      = false
+var bool  breakShortConsumed     = false
+// Prevent multiple REVERSAL entries per direction per day
+var bool  revLongConsumed        = false
+var bool  revShortConsumed       = false
 
 // Reset daily state at midnight (chart timezone)
 if newDay
@@ -56,6 +67,12 @@ if newDay
     tradedToday := false
     trapUpConsumed := false
     trapDownConsumed := false
+    activeSL := na
+    activeTP := na
+    breakLongConsumed := false
+    breakShortConsumed := false
+    revLongConsumed := false
+    revShortConsumed := false
 
 // Pull the 5-minute bar that STARTS at 9:30 (value available on its close at 9:35)
 sess0930Hi = request.security(syminfo.tickerid, "5", (hour == 9 and minute == 30) ? high : na, barmerge.gaps_off, barmerge.lookahead_off)
@@ -76,6 +93,12 @@ if not haveRange and not na(sess0930Hi) and not na(sess0930Lo)
     tradedToday := false
     trapUpConsumed := false
     trapDownConsumed := false
+    activeSL := na
+    activeTP := na
+    breakLongConsumed := false
+    breakShortConsumed := false
+    revLongConsumed := false
+    revShortConsumed := false
 
 // -------------------- Visuals
 plot(showRange and haveRange ? rangeHi : na, "Range High", color=color.new(color.teal, 0), style=plot.style_linebr, linewidth=2)
@@ -135,7 +158,7 @@ calcOrderQty(entryPrice, stopPrice) =>
 // -------------------- BREAK Entries (needs FVG and ANY of the 3 bars closes outside)
 if enableBreak and allowEntry
     // Long BREAK
-    breakLongOk  = bullFVG and (close > rangeHi or close[1] > rangeHi or close[2] > rangeHi)
+    breakLongOk  = bullFVG and (close > rangeHi or close[1] > rangeHi or close[2] > rangeHi) and not breakLongConsumed
     if breakLongOk
         // Stop at the FIRST candle that closed outside among the 3 FVG candles
         float stopL = na
@@ -149,9 +172,12 @@ if enableBreak and allowEntry
             if qtyL > 0
                 strategy.entry("LONG_BREAK", strategy.long, qty=qtyL)
                 strategy.exit("LONG_BREAK_TP/SL", from_entry="LONG_BREAK", stop=stopL, limit=tpL)
+                activeSL := stopL
+                activeTP := tpL
                 tradedToday := oneTradePerDay ? true : tradedToday
+                breakLongConsumed := true
     // Short BREAK
-    breakShortOk = bearFVG and (close < rangeLo or close[1] < rangeLo or close[2] < rangeLo)
+    breakShortOk = bearFVG and (close < rangeLo or close[1] < rangeLo or close[2] < rangeLo) and not breakShortConsumed
     if breakShortOk
         // Stop at the FIRST candle that closed outside among the 3 FVG candles
         float stopS = na
@@ -165,7 +191,10 @@ if enableBreak and allowEntry
             if qtyS > 0
                 strategy.entry("SHORT_BREAK", strategy.short, qty=qtyS)
                 strategy.exit("SHORT_BREAK_TP/SL", from_entry="SHORT_BREAK", stop=stopS, limit=tpS)
+                activeSL := stopS
+                activeTP := tpS
                 tradedToday := oneTradePerDay ? true : tradedToday
+                breakShortConsumed := true
 
 // -------------------- TRAP Entries (Break → Retest inside → Reclose outside; FVG not required)
 if enableTrap and allowEntry
@@ -179,6 +208,8 @@ if enableTrap and allowEntry
             if qtyL > 0
                 strategy.entry("LONG_TRAP", strategy.long, qty=qtyL)
                 strategy.exit("LONG_TRAP_TP/SL", from_entry="LONG_TRAP", stop=stopL, limit=tpL)
+                activeSL := stopL
+                activeTP := tpL
                 tradedToday := oneTradePerDay ? true : tradedToday
                 trapUpConsumed := true
                 // Disarm until a fresh retest back inside occurs
@@ -193,6 +224,8 @@ if enableTrap and allowEntry
             if qtyS > 0
                 strategy.entry("SHORT_TRAP", strategy.short, qty=qtyS)
                 strategy.exit("SHORT_TRAP_TP/SL", from_entry="SHORT_TRAP", stop=stopS, limit=tpS)
+                activeSL := stopS
+                activeTP := tpS
                 tradedToday := oneTradePerDay ? true : tradedToday
                 trapDownConsumed := true
                 // Disarm until a fresh retest back inside occurs
@@ -201,7 +234,7 @@ if enableTrap and allowEntry
 // -------------------- REVERSAL Entries (Failed break + opposite FVG back into range)
 if enableReversal and allowEntry
     // After bearish break, bullish FVG back into range → LONG
-    if breakDownFound and bullFVG and closeInside
+    if breakDownFound and bullFVG and closeInside and not revLongConsumed
         stopL  = low[2]  // first candle of the FVG
         entryL = close
         if entryL > stopL
@@ -210,9 +243,12 @@ if enableReversal and allowEntry
             if qtyL > 0
                 strategy.entry("LONG_REV", strategy.long, qty=qtyL)
                 strategy.exit("LONG_REV_TP/SL", from_entry="LONG_REV", stop=stopL, limit=tpL)
+                revLongConsumed := true
+                activeSL := stopL
+                activeTP := tpL
                 tradedToday := oneTradePerDay ? true : tradedToday
     // After bullish break, bearish FVG back into range → SHORT
-    if breakUpFound and bearFVG and closeInside
+    if breakUpFound and bearFVG and closeInside and not revShortConsumed
         stopS  = high[2] // first candle of the FVG
         entryS = close
         if entryS < stopS
@@ -221,12 +257,19 @@ if enableReversal and allowEntry
             if qtyS > 0
                 strategy.entry("SHORT_REV", strategy.short, qty=qtyS)
                 strategy.exit("SHORT_REV_TP/SL", from_entry="SHORT_REV", stop=stopS, limit=tpS)
+                revShortConsumed := true
+                activeSL := stopS
+                activeTP := tpS
                 tradedToday := oneTradePerDay ? true : tradedToday
 
 // -------------------- Markers
-plotshape(enableBreak and (bullFVG and (close > rangeHi or close[1] > rangeHi or close[2] > rangeHi)) and allowEntry,  title="Break Long",  style=shape.triangleup,   color=color.new(color.teal, 0),   size=size.tiny, location=location.belowbar, text="Break")
-plotshape(enableBreak and (bearFVG and (close < rangeLo or close[1] < rangeLo or close[2] < rangeLo)) and allowEntry,  title="Break Short", style=shape.triangledown, color=color.new(color.orange, 0), size=size.tiny, location=location.abovebar, text="Break")
-plotshape(enableTrap  and breakUpFound   and trapUpRetestedInside   and closeAbove and allowEntry,  title="Trap Long",  style=shape.circle, color=color.new(color.teal, 0),   size=size.tiny, location=location.belowbar, text="Trap")
-plotshape(enableTrap  and breakDownFound and trapDownRetestedInside and closeBelow and allowEntry,  title="Trap Short", style=shape.circle, color=color.new(color.orange, 0), size=size.tiny, location=location.abovebar, text="Trap")
-plotshape(enableReversal and breakDownFound and bullFVG and closeInside and allowEntry, title="Reversal Long",  style=shape.diamond, color=color.new(color.teal, 0),   size=size.tiny, location=location.belowbar, text="Rev")
-plotshape(enableReversal and breakUpFound   and bearFVG and closeInside and allowEntry, title="Reversal Short", style=shape.diamond, color=color.new(color.orange, 0), size=size.tiny, location=location.abovebar, text="Rev")
+plotshape(enableBreak and (bullFVG and (close > rangeHi or close[1] > rangeHi or close[2] > rangeHi)) and allowEntry and not breakLongConsumed,  title="Break Long",  style=shape.triangleup,   color=color.new(color.teal, 0),   size=size.tiny, location=location.belowbar, text="Break")
+plotshape(enableBreak and (bearFVG and (close < rangeLo or close[1] < rangeLo or close[2] < rangeLo)) and allowEntry and not breakShortConsumed,  title="Break Short", style=shape.triangledown, color=color.new(color.orange, 0), size=size.tiny, location=location.abovebar, text="Break")
+plotshape(enableTrap  and breakUpFound   and trapUpRetestedInside   and closeAbove and allowEntry and not trapUpConsumed,  title="Trap Long",  style=shape.circle, color=color.new(color.teal, 0),   size=size.tiny, location=location.belowbar, text="Trap")
+plotshape(enableTrap  and breakDownFound and trapDownRetestedInside and closeBelow and allowEntry and not trapDownConsumed,  title="Trap Short", style=shape.circle, color=color.new(color.orange, 0), size=size.tiny, location=location.abovebar, text="Trap")
+
+// -------------------- TP/SL Visuals
+plot(showSL and strategy.position_size != 0 ? activeSL : na, title="Stop Loss", color=color.new(color.fuchsia, 0), linewidth=2, style=plot.style_line)
+plot(showTP and strategy.position_size != 0 ? activeTP : na, title="Take Profit", color=color.new(color.green, 0), linewidth=2, style=plot.style_line)
+plotshape(enableReversal and breakDownFound and bullFVG and closeInside and allowEntry and not revLongConsumed, title="Reversal Long",  style=shape.diamond, color=color.new(color.teal, 0),   size=size.tiny, location=location.belowbar, text="Rev")
+plotshape(enableReversal and breakUpFound   and bearFVG and closeInside and allowEntry and not revShortConsumed, title="Reversal Short", style=shape.diamond, color=color.new(color.orange, 0), size=size.tiny, location=location.abovebar, text="Rev")
