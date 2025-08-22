@@ -7,13 +7,13 @@ enableBreak    = input.bool(true,  "Enable Break Entry")
 enableTrap     = input.bool(true, "Enable Trap Entry")
 enableReversal = input.bool(true, "Enable Reversal Entry")
 rr             = input.float(2.0,  "Take-Profit R Multiple", step=0.25, minval=0.25)
-oneTradePerDay = input.bool(false,  "One Trade Per Day")
+oneTradePerDay = input.bool(true,  "One Trade Per Day")
 showRange      = input.bool(true,  "Show 9:30 5m Range")
 showSL         = input.bool(true,  "Show Stop Loss Line")
 showTP         = input.bool(true,  "Show Take Profit Line")
 
 // Risk management
-riskPct        = input.float(1.0,  "Risk % of Equity per Trade", step=0.1, minval=0.1, maxval=100.0)
+riskPct        = input.float(1.5,  "Risk % of Equity per Trade", step=0.1, minval=0.1, maxval=100.0)
 sizeMode       = input.string("Risk %", "Position Sizing Mode", options=["Risk %", "Fixed contracts"])
 fixedContracts = input.int(1, "Fixed Contracts", minval=1)
 
