@@ -17,6 +17,13 @@ riskPct        = input.float(1.5,  "Risk % of Equity per Trade", step=0.1, minva
 sizeMode       = input.string("Risk %", "Position Sizing Mode", options=["Risk %", "Fixed contracts"])
 fixedContracts = input.int(1, "Fixed Contracts", minval=1)
 
+// -------------------- TradingViewLink alerts
+enableTVLAlerts      = input.bool(false, "TVLink: Enable Alerts")
+tvlSecret            = input.string("", "TVLink: Secret Key")
+tvlMagic             = input.int(93001, "TVLink: Magic Number")
+tvlFixedLots         = input.float(0.00, "TVLink: Fixed Lot Size (0 = service default)", step=0.01, minval=0.0)
+tvlSymbolOverride    = input.string("", "TVLink: MT4 Symbol Override (empty uses chart)")
+
 // Optional: warn if not on 1-minute chart (execution timeframe per PRD)
 onOneMinute = timeframe.isminutes and timeframe.multiplier == 1
 
@@ -155,6 +162,13 @@ calcOrderQty(entryPrice, stopPrice) =>
         qty := riskPerContract > 0 ? math.floor(riskCash / riskPerContract) : 0
     qty
 
+// -------------------- TradingViewLink alert helper
+sendTVLAlert(_side, _entry, _sl, _tp, _tag) =>
+    if enableTVLAlerts
+        sym = str.length(tvlSymbolOverride) > 0 ? tvlSymbolOverride : syminfo.ticker
+        msg = '{"secret":"' + tvlSecret + '","command":"open","side":"' + _side + '","symbol":"' + sym + '","order_type":"market","price":' + str.tostring(_entry) + ',"sl":' + str.tostring(_sl) + ',"tp":' + str.tostring(_tp) + ',"magic":' + str.tostring(tvlMagic) + ',"lot_size":' + str.tostring(tvlFixedLots) + ',"strategy":"orbrange","tag":"' + _tag + '","tf":"' + timeframe.period + '"}'
+        alert(msg, alert.freq_once_per_bar_close)
+
 // -------------------- BREAK Entries (needs FVG and ANY of the 3 bars closes outside)
 if enableBreak and allowEntry
     // Long BREAK
@@ -174,6 +188,7 @@ if enableBreak and allowEntry
                 strategy.exit("LONG_BREAK_TP/SL", from_entry="LONG_BREAK", stop=stopL, limit=tpL)
                 activeSL := stopL
                 activeTP := tpL
+                sendTVLAlert("buy", entryL, stopL, tpL, "LONG_BREAK")
                 tradedToday := oneTradePerDay ? true : tradedToday
                 breakLongConsumed := true
     // Short BREAK
@@ -193,6 +208,7 @@ if enableBreak and allowEntry
                 strategy.exit("SHORT_BREAK_TP/SL", from_entry="SHORT_BREAK", stop=stopS, limit=tpS)
                 activeSL := stopS
                 activeTP := tpS
+                sendTVLAlert("sell", entryS, stopS, tpS, "SHORT_BREAK")
                 tradedToday := oneTradePerDay ? true : tradedToday
                 breakShortConsumed := true
 
@@ -210,6 +226,7 @@ if enableTrap and allowEntry
                 strategy.exit("LONG_TRAP_TP/SL", from_entry="LONG_TRAP", stop=stopL, limit=tpL)
                 activeSL := stopL
                 activeTP := tpL
+                sendTVLAlert("buy", entryL, stopL, tpL, "LONG_TRAP")
                 tradedToday := oneTradePerDay ? true : tradedToday
                 trapUpConsumed := true
                 // Disarm until a fresh retest back inside occurs
@@ -226,6 +243,7 @@ if enableTrap and allowEntry
                 strategy.exit("SHORT_TRAP_TP/SL", from_entry="SHORT_TRAP", stop=stopS, limit=tpS)
                 activeSL := stopS
                 activeTP := tpS
+                sendTVLAlert("sell", entryS, stopS, tpS, "SHORT_TRAP")
                 tradedToday := oneTradePerDay ? true : tradedToday
                 trapDownConsumed := true
                 // Disarm until a fresh retest back inside occurs
@@ -246,6 +264,7 @@ if enableReversal and allowEntry
                 revLongConsumed := true
                 activeSL := stopL
                 activeTP := tpL
+                sendTVLAlert("buy", entryL, stopL, tpL, "LONG_REV")
                 tradedToday := oneTradePerDay ? true : tradedToday
     // After bullish break, bearish FVG back into range → SHORT
     if breakUpFound and bearFVG and closeInside and not revShortConsumed
@@ -260,6 +279,7 @@ if enableReversal and allowEntry
                 revShortConsumed := true
                 activeSL := stopS
                 activeTP := tpS
+                sendTVLAlert("sell", entryS, stopS, tpS, "SHORT_REV")
                 tradedToday := oneTradePerDay ? true : tradedToday
 
 // -------------------- Markers
