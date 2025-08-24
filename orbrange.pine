@@ -18,6 +18,11 @@ riskPct        = input.float(1.5,  "Risk % of Equity per Trade", step=0.1, minva
 sizeMode       = input.string("Risk %", "Position Sizing Mode", options=["Risk %", "Fixed contracts"])
 fixedContracts = input.int(1, "Fixed Contracts", minval=1)
 
+// Global minimum stop configuration (applies to all setups)
+globalEnforceMinSL = input.bool(true, "Global: Enforce Minimum Stop (all setups)")
+globalMinSLPoints  = input.float(40.0, "Global: Minimum Stop Distance (price units)", step=0.25, minval=0)
+globalMinSLMode    = input.string("Pad to minimum", "Global: Handling if SL < minimum", options=["Pad to minimum", "Skip trade"])
+
 // Optional: warn if not on 1-minute chart (execution timeframe per PRD)
 onOneMinute = timeframe.isminutes and timeframe.multiplier == 1
 
@@ -168,7 +173,17 @@ if enableBreak and allowEntry
         float stopL = na
         stopL := na(initBreakUpLow) ? low : initBreakUpLow
         entryL = close
-        if entryL > stopL
+        bool skipTradeL = false
+        // Global minimum stop enforcement (all setups)
+        if globalEnforceMinSL
+            minRisk = globalMinSLPoints
+            currRisk = entryL - stopL
+            if currRisk < minRisk
+                if globalMinSLMode == "Pad to minimum"
+                    stopL := entryL - minRisk
+                else
+                    skipTradeL := true
+        if not skipTradeL and entryL > stopL
             tpL = entryL + rr * (entryL - stopL)
             qtyL = calcOrderQty(entryL, stopL)
             if qtyL > 0
@@ -189,7 +204,17 @@ if enableBreak and allowEntry
         float stopS = na
         stopS := na(initBreakDownHigh) ? high : initBreakDownHigh
         entryS = close
-        if entryS < stopS
+        bool skipTradeS = false
+        // Global minimum stop enforcement (all setups)
+        if globalEnforceMinSL
+            minRiskS = globalMinSLPoints
+            currRiskS = stopS - entryS
+            if currRiskS < minRiskS
+                if globalMinSLMode == "Pad to minimum"
+                    stopS := entryS + minRiskS
+                else
+                    skipTradeS := true
+        if not skipTradeS and entryS < stopS
             tpS = entryS - rr * (stopS - entryS)
             qtyS = calcOrderQty(entryS, stopS)
             if qtyS > 0
@@ -208,9 +233,20 @@ if enableBreak and allowEntry
 if enableTrap and allowEntry
     // Long TRAP
     if breakUpFound and trapUpRetestedInside and closeAbove and not trapUpConsumed
-        stopL  = na(initBreakUpLow) ? low : initBreakUpLow
+        baseStopL  = na(initBreakUpLow) ? low : initBreakUpLow
         entryL = close
-        if entryL > stopL
+        float stopL = baseStopL
+        bool skipTradeL = false
+        // Apply global minimum stop as well
+        if globalEnforceMinSL and not skipTradeL
+            minRiskG = globalMinSLPoints
+            currRiskG = entryL - stopL
+            if currRiskG < minRiskG
+                if globalMinSLMode == "Pad to minimum"
+                    stopL := entryL - minRiskG
+                else
+                    skipTradeL := true
+        if not skipTradeL and entryL > stopL
             tpL = entryL + rr * (entryL - stopL)
             qtyL = calcOrderQty(entryL, stopL)
             if qtyL > 0
@@ -228,9 +264,20 @@ if enableTrap and allowEntry
                     alert(str.format("{0} LONG_TRAP entry={1} stop={2} tp={3} riskPts={4} tpPts={5}", syminfo.ticker, fmt(entryL), fmt(stopL), fmt(tpL), fmt(riskPts), fmt(tpPts)), alert.freq_once_per_bar_close)
     // Short TRAP
     if breakDownFound and trapDownRetestedInside and closeBelow and not trapDownConsumed
-        stopS  = na(initBreakDownHigh) ? high : initBreakDownHigh
+        baseStopS  = na(initBreakDownHigh) ? high : initBreakDownHigh
         entryS = close
-        if entryS < stopS
+        float stopS = baseStopS
+        bool skipTradeS = false
+        // Apply global minimum stop as well
+        if globalEnforceMinSL and not skipTradeS
+            minRiskGS = globalMinSLPoints
+            currRiskGS = stopS - entryS
+            if currRiskGS < minRiskGS
+                if globalMinSLMode == "Pad to minimum"
+                    stopS := entryS + minRiskGS
+                else
+                    skipTradeS := true
+        if not skipTradeS and entryS < stopS
             tpS = entryS - rr * (stopS - entryS)
             qtyS = calcOrderQty(entryS, stopS)
             if qtyS > 0
@@ -253,7 +300,16 @@ if enableReversal and allowEntry
     if breakDownFound and bullFVG and closeInside and not revLongConsumed
         stopL  = low[2]  // first candle of the FVG
         entryL = close
-        if entryL > stopL
+        bool skipRevL = false
+        if globalEnforceMinSL
+            minRisk = globalMinSLPoints
+            currRisk = entryL - stopL
+            if currRisk < minRisk
+                if globalMinSLMode == "Pad to minimum"
+                    stopL := entryL - minRisk
+                else
+                    skipRevL := true
+        if not skipRevL and entryL > stopL
             tpL = entryL + rr * (entryL - stopL)
             qtyL = calcOrderQty(entryL, stopL)
             if qtyL > 0
@@ -271,7 +327,16 @@ if enableReversal and allowEntry
     if breakUpFound and bearFVG and closeInside and not revShortConsumed
         stopS  = high[2] // first candle of the FVG
         entryS = close
-        if entryS < stopS
+        bool skipRevS = false
+        if globalEnforceMinSL
+            minRiskS = globalMinSLPoints
+            currRiskS = stopS - entryS
+            if currRiskS < minRiskS
+                if globalMinSLMode == "Pad to minimum"
+                    stopS := entryS + minRiskS
+                else
+                    skipRevS := true
+        if not skipRevS and entryS < stopS
             tpS = entryS - rr * (stopS - entryS)
             qtyS = calcOrderQty(entryS, stopS)
             if qtyS > 0

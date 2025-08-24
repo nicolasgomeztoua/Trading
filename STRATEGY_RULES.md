@@ -80,6 +80,10 @@ Entry (Long):
 
 Stop-Loss (Long):
 - Place SL at the low of the very first candle that closed above the Range High (the initial break candle). If that is not available, use current bar low.
+  - Optional minimum stop (configurable): If the distance `entry - SL` is below `trapMinSLPoints`, apply one of:
+    - Pad to minimum: shift SL farther to be exactly `entry - trapMinSLPoints`.
+    - Use FVG middle if present: set SL to the middle FVG candle’s low; if no bullish FVG, skip the trade.
+    - Skip trade: do not take the Trap if risk is below minimum.
 
 Take-Profit (Long):
 - Fixed `R` multiple: `TP = entry + rr * (entry - stop)`.
@@ -94,6 +98,10 @@ Entry (Short):
 
 Stop-Loss (Short):
 - Place SL at the high of the very first candle that closed below the Range Low (the initial break candle). If that is not available, use current bar high.
+  - Optional minimum stop (configurable): If the distance `SL - entry` is below `trapMinSLPoints`, apply one of:
+    - Pad to minimum: shift SL farther to be exactly `entry + trapMinSLPoints`.
+    - Use FVG middle if present: set SL to the middle FVG candle’s high; if no bearish FVG, skip the trade.
+    - Skip trade: do not take the Trap if risk is below minimum.
 
 Take-Profit (Short):
 - Fixed `R` multiple: `TP = entry - rr * (stop - entry)`.
@@ -149,6 +157,12 @@ Sizing can be configured via inputs:
 - `fixedContracts = 1` (used when `sizeMode = Fixed contracts`).
 - Visuals: `showRange = true`, `showSL = true`, `showTP = true`.
 - Alerts: `enableAlerts = true`.
+  
+
+### Global minimum stop (all setups)
+- `globalEnforceMinSL = true`
+- `globalMinSLPoints = 40.0` (price units; recommended for NDX)
+- `globalMinSLMode` ∈ {`Pad to minimum`, `Skip trade`}
 - Strategy settings: `pyramiding = 0`, `process_orders_on_close = true`, `calc_on_every_tick = false`.
 
 ## Visuals and Alerts
