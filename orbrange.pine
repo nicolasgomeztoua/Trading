@@ -1,6 +1,6 @@
 //@version=5
 strategy("Three-Step 9:30 Range Scalping (Backtest)", overlay=true, calc_on_every_tick=false, process_orders_on_close=true,
-     initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, pyramiding=0)
+     initial_capital=50000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, pyramiding=0)
 
 // -------------------- Inputs
 enableBreak    = input.bool(true,  "Enable Break Entry")
@@ -11,6 +11,7 @@ oneTradePerDay = input.bool(true,  "One Trade Per Day")
 showRange      = input.bool(true,  "Show 9:30 5m Range")
 showSL         = input.bool(true,  "Show Stop Loss Line")
 showTP         = input.bool(true,  "Show Take Profit Line")
+enableAlerts   = input.bool(true,  "Enable Alerts")
 
 // Risk management
 riskPct        = input.float(1.5,  "Risk % of Equity per Trade", step=0.1, minval=0.1, maxval=100.0)
@@ -19,6 +20,9 @@ fixedContracts = input.int(1, "Fixed Contracts", minval=1)
 
 // Optional: warn if not on 1-minute chart (execution timeframe per PRD)
 onOneMinute = timeframe.isminutes and timeframe.multiplier == 1
+
+// Utility formatter matching instrument min tick
+fmt(v) => str.tostring(v, format.mintick)
 
 // -------------------- Time helpers (chart is assumed New York time)
 newDay   = ta.change(time("D")) != 0
@@ -160,11 +164,9 @@ if enableBreak and allowEntry
     // Long BREAK
     breakLongOk  = bullFVG and (close > rangeHi or close[1] > rangeHi or close[2] > rangeHi) and not breakLongConsumed
     if breakLongOk
-        // Stop at the FIRST candle that closed outside among the 3 FVG candles
+        // Stop at the very first 1m candle that closed outside the range (initial break)
         float stopL = na
-        stopL := close[2] > rangeHi ? low[2] : stopL
-        stopL := na(stopL) and close[1] > rangeHi ? low[1] : stopL
-        stopL := na(stopL) and close > rangeHi ? low : stopL
+        stopL := na(initBreakUpLow) ? low : initBreakUpLow
         entryL = close
         if entryL > stopL
             tpL = entryL + rr * (entryL - stopL)
@@ -176,14 +178,16 @@ if enableBreak and allowEntry
                 activeTP := tpL
                 tradedToday := oneTradePerDay ? true : tradedToday
                 breakLongConsumed := true
+                if enableAlerts
+                    riskPts = entryL - stopL
+                    tpPts   = tpL - entryL
+                    alert(str.format("{0} LONG_BREAK entry={1} stop={2} tp={3} riskPts={4} tpPts={5}", syminfo.ticker, fmt(entryL), fmt(stopL), fmt(tpL), fmt(riskPts), fmt(tpPts)), alert.freq_once_per_bar_close)
     // Short BREAK
     breakShortOk = bearFVG and (close < rangeLo or close[1] < rangeLo or close[2] < rangeLo) and not breakShortConsumed
     if breakShortOk
-        // Stop at the FIRST candle that closed outside among the 3 FVG candles
+        // Stop at the very first 1m candle that closed outside the range (initial break)
         float stopS = na
-        stopS := close[2] < rangeLo ? high[2] : stopS
-        stopS := na(stopS) and close[1] < rangeLo ? high[1] : stopS
-        stopS := na(stopS) and close < rangeLo ? high : stopS
+        stopS := na(initBreakDownHigh) ? high : initBreakDownHigh
         entryS = close
         if entryS < stopS
             tpS = entryS - rr * (stopS - entryS)
@@ -195,6 +199,10 @@ if enableBreak and allowEntry
                 activeTP := tpS
                 tradedToday := oneTradePerDay ? true : tradedToday
                 breakShortConsumed := true
+                if enableAlerts
+                    riskPts = stopS - entryS
+                    tpPts   = entryS - tpS
+                    alert(str.format("{0} SHORT_BREAK entry={1} stop={2} tp={3} riskPts={4} tpPts={5}", syminfo.ticker, fmt(entryS), fmt(stopS), fmt(tpS), fmt(riskPts), fmt(tpPts)), alert.freq_once_per_bar_close)
 
 // -------------------- TRAP Entries (Break → Retest inside → Reclose outside; FVG not required)
 if enableTrap and allowEntry
@@ -214,6 +222,10 @@ if enableTrap and allowEntry
                 trapUpConsumed := true
                 // Disarm until a fresh retest back inside occurs
                 trapUpRetestedInside := false
+                if enableAlerts
+                    riskPts = entryL - stopL
+                    tpPts   = tpL - entryL
+                    alert(str.format("{0} LONG_TRAP entry={1} stop={2} tp={3} riskPts={4} tpPts={5}", syminfo.ticker, fmt(entryL), fmt(stopL), fmt(tpL), fmt(riskPts), fmt(tpPts)), alert.freq_once_per_bar_close)
     // Short TRAP
     if breakDownFound and trapDownRetestedInside and closeBelow and not trapDownConsumed
         stopS  = na(initBreakDownHigh) ? high : initBreakDownHigh
@@ -230,6 +242,10 @@ if enableTrap and allowEntry
                 trapDownConsumed := true
                 // Disarm until a fresh retest back inside occurs
                 trapDownRetestedInside := false
+                if enableAlerts
+                    riskPts = stopS - entryS
+                    tpPts   = entryS - tpS
+                    alert(str.format("{0} SHORT_TRAP entry={1} stop={2} tp={3} riskPts={4} tpPts={5}", syminfo.ticker, fmt(entryS), fmt(stopS), fmt(tpS), fmt(riskPts), fmt(tpPts)), alert.freq_once_per_bar_close)
 
 // -------------------- REVERSAL Entries (Failed break + opposite FVG back into range)
 if enableReversal and allowEntry
@@ -247,6 +263,10 @@ if enableReversal and allowEntry
                 activeSL := stopL
                 activeTP := tpL
                 tradedToday := oneTradePerDay ? true : tradedToday
+                if enableAlerts
+                    riskPts = entryL - stopL
+                    tpPts   = tpL - entryL
+                    alert(str.format("{0} LONG_REV entry={1} stop={2} tp={3} riskPts={4} tpPts={5}", syminfo.ticker, fmt(entryL), fmt(stopL), fmt(tpL), fmt(riskPts), fmt(tpPts)), alert.freq_once_per_bar_close)
     // After bullish break, bearish FVG back into range → SHORT
     if breakUpFound and bearFVG and closeInside and not revShortConsumed
         stopS  = high[2] // first candle of the FVG
@@ -261,6 +281,10 @@ if enableReversal and allowEntry
                 activeSL := stopS
                 activeTP := tpS
                 tradedToday := oneTradePerDay ? true : tradedToday
+                if enableAlerts
+                    riskPts = stopS - entryS
+                    tpPts   = entryS - tpS
+                    alert(str.format("{0} SHORT_REV entry={1} stop={2} tp={3} riskPts={4} tpPts={5}", syminfo.ticker, fmt(entryS), fmt(stopS), fmt(tpS), fmt(riskPts), fmt(tpPts)), alert.freq_once_per_bar_close)
 
 // -------------------- Markers
 plotshape(enableBreak and (bullFVG and (close > rangeHi or close[1] > rangeHi or close[2] > rangeHi)) and allowEntry and not breakLongConsumed,  title="Break Long",  style=shape.triangleup,   color=color.new(color.teal, 0),   size=size.tiny, location=location.belowbar, text="Break")
