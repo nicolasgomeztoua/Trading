@@ -1,0 +1,92 @@
+//@version=5
+indicator("Daily High/Low Marker", overlay=true, max_lines_count=2, max_labels_count=2)
+
+highColor = input.color(color.new(color.red, 0), "High Line Color")
+lowColor  = input.color(color.new(color.teal, 0), "Low Line Color")
+lineWidth = input.int(1, "Line Width", minval=1, maxval=4)
+
+var float dayHigh = na
+var float dayLow  = na
+var int   highBarIndex = na
+var int   lowBarIndex  = na
+var line  highLine = na
+var line  lowLine  = na
+var label highLabel = na
+var label lowLabel  = na
+
+newDay = ta.change(time("D")) != 0
+startOfDay = newDay or na(dayHigh) or na(dayLow)
+
+if startOfDay
+    dayHigh := high
+    dayLow := low
+    highBarIndex := bar_index
+    lowBarIndex := bar_index
+
+    if not na(highLine)
+        line.delete(highLine)
+    if not na(lowLine)
+        line.delete(lowLine)
+    if not na(highLabel)
+        label.delete(highLabel)
+    if not na(lowLabel)
+        label.delete(lowLabel)
+
+    highLine := line.new(highBarIndex, dayHigh, highBarIndex + 1, dayHigh, extend=extend.right, color=highColor, width=lineWidth, style=line.style_dotted)
+    lowLine  := line.new(lowBarIndex,  dayLow,  lowBarIndex + 1,  dayLow,  extend=extend.right, color=lowColor,  width=lineWidth, style=line.style_dotted)
+
+    highLabel := label.new(highBarIndex, dayHigh, text="DH", style=label.style_label_down, textcolor=highColor, color=color.new(highColor, 80), size=size.tiny)
+    lowLabel  := label.new(lowBarIndex,  dayLow,  text="DL", style=label.style_label_up,   textcolor=lowColor,  color=color.new(lowColor, 80), size=size.tiny)
+else
+    if high > dayHigh
+        dayHigh := high
+        highBarIndex := bar_index
+        if not na(highLabel)
+            label.delete(highLabel)
+        highLabel := label.new(highBarIndex, dayHigh, text="DH", style=label.style_label_down, textcolor=highColor, color=color.new(highColor, 80), size=size.tiny)
+        if na(highLine)
+            highLine := line.new(highBarIndex, dayHigh, highBarIndex + 1, dayHigh, extend=extend.right, color=highColor, width=lineWidth, style=line.style_dotted)
+    if low < dayLow or na(dayLow)
+        dayLow := low
+        lowBarIndex := bar_index
+        if not na(lowLabel)
+            label.delete(lowLabel)
+        lowLabel := label.new(lowBarIndex, dayLow, text="DL", style=label.style_label_up, textcolor=lowColor, color=color.new(lowColor, 80), size=size.tiny)
+        if na(lowLine)
+            lowLine := line.new(lowBarIndex, dayLow, lowBarIndex + 1, dayLow, extend=extend.right, color=lowColor, width=lineWidth, style=line.style_dotted)
+
+if not na(highLine)
+    line.set_x1(highLine, highBarIndex)
+    line.set_x2(highLine, bar_index)
+    line.set_y1(highLine, dayHigh)
+    line.set_y2(highLine, dayHigh)
+    line.set_color(highLine, highColor)
+    line.set_width(highLine, lineWidth)
+    line.set_style(highLine, line.style_dotted)
+
+if not na(lowLine)
+    line.set_x1(lowLine, lowBarIndex)
+    line.set_x2(lowLine, bar_index)
+    line.set_y1(lowLine, dayLow)
+    line.set_y2(lowLine, dayLow)
+    line.set_color(lowLine, lowColor)
+    line.set_width(lowLine, lineWidth)
+    line.set_style(lowLine, line.style_dotted)
+
+if not na(highLabel)
+    label.set_x(highLabel, highBarIndex)
+    label.set_y(highLabel, dayHigh)
+    label.set_text(highLabel, "DH")
+    label.set_textcolor(highLabel, highColor)
+    label.set_color(highLabel, color.new(highColor, 80))
+    label.set_size(highLabel, size.tiny)
+    label.set_style(highLabel, label.style_label_down)
+
+if not na(lowLabel)
+    label.set_x(lowLabel, lowBarIndex)
+    label.set_y(lowLabel, dayLow)
+    label.set_text(lowLabel, "DL")
+    label.set_textcolor(lowLabel, lowColor)
+    label.set_color(lowLabel, color.new(lowColor, 80))
+    label.set_size(lowLabel, size.tiny)
+    label.set_style(lowLabel, label.style_label_up)

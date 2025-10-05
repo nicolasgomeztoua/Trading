@@ -19,7 +19,7 @@ sizeMode       = input.string("Risk %", "Position Sizing Mode", options=["Risk %
 fixedContracts = input.int(1, "Fixed Contracts", minval=1)
 
 // Global minimum stop configuration (applies to all setups)
-globalEnforceMinSL = input.bool(true, "Global: Enforce Minimum Stop (all setups)")
+globalEnforceMinSL = input.bool(false, "Global: Enforce Minimum Stop (all setups)")
 globalMinSLPoints  = input.float(40.0, "Global: Minimum Stop Distance (price units)", step=0.25, minval=0)
 globalMinSLMode    = input.string("Pad to minimum", "Global: Handling if SL < minimum", options=["Pad to minimum", "Skip trade"])
 
