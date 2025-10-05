@@ -1,9 +1,11 @@
 //@version=5
-indicator("Daily High/Low Marker", overlay=true, max_lines_count=2, max_labels_count=2)
+indicator("Daily High/Low Marker", overlay=true, max_lines_count=4, max_labels_count=4)
 
-highColor = input.color(color.new(color.red, 0), "High Line Color")
-lowColor  = input.color(color.new(color.teal, 0), "Low Line Color")
-lineWidth = input.int(1, "Line Width", minval=1, maxval=4)
+highColor     = input.color(color.new(color.red, 0), "High Line Color")
+lowColor      = input.color(color.new(color.teal, 0), "Low Line Color")
+prevHighColor = input.color(color.new(color.orange, 0), "Previous High Line Color")
+prevLowColor  = input.color(color.new(color.purple, 0), "Previous Low Line Color")
+lineWidth     = input.int(1, "Line Width", minval=1, maxval=4)
 
 var float dayHigh = na
 var float dayLow  = na
@@ -13,11 +15,62 @@ var line  highLine = na
 var line  lowLine  = na
 var label highLabel = na
 var label lowLabel  = na
+var float prevDayHigh = na
+var float prevDayLow  = na
+var int   prevHighBarIndex = na
+var int   prevLowBarIndex  = na
+var line  prevHighLine = na
+var line  prevLowLine  = na
+var label prevHighLabel = na
+var label prevLowLabel  = na
+var bool  prevHighCrossed = false
+var bool  prevLowCrossed  = false
+var int   prevHighCrossBarIndex = na
+var int   prevLowCrossBarIndex  = na
 
 newDay = ta.change(time("D")) != 0
 startOfDay = newDay or na(dayHigh) or na(dayLow)
 
 if startOfDay
+    if not na(prevHighLine)
+        line.delete(prevHighLine)
+    if not na(prevLowLine)
+        line.delete(prevLowLine)
+    if not na(prevHighLabel)
+        label.delete(prevHighLabel)
+    if not na(prevLowLabel)
+        label.delete(prevLowLabel)
+
+    prevHighLine := na
+    prevLowLine := na
+    prevHighLabel := na
+    prevLowLabel := na
+    prevHighCrossed := false
+    prevLowCrossed := false
+    prevHighCrossBarIndex := na
+    prevLowCrossBarIndex := na
+
+    if not na(dayHigh) and not na(dayLow) and not na(highBarIndex) and not na(lowBarIndex)
+        prevDayHigh := dayHigh
+        prevDayLow := dayLow
+        prevHighBarIndex := highBarIndex
+        prevLowBarIndex := lowBarIndex
+
+        prevHighLine := line.new(prevHighBarIndex, prevDayHigh, prevHighBarIndex + 1, prevDayHigh, extend=extend.right, color=prevHighColor, width=lineWidth, style=line.style_dashed)
+        prevLowLine  := line.new(prevLowBarIndex,  prevDayLow,  prevLowBarIndex + 1,  prevDayLow,  extend=extend.right, color=prevLowColor,  width=lineWidth, style=line.style_dashed)
+
+        prevHighLabel := label.new(prevHighBarIndex, prevDayHigh, text="PDH", style=label.style_label_down, textcolor=prevHighColor, color=color.new(prevHighColor, 80), size=size.tiny)
+        prevLowLabel  := label.new(prevLowBarIndex,  prevDayLow,  text="PDL", style=label.style_label_up,   textcolor=prevLowColor,  color=color.new(prevLowColor, 80), size=size.tiny)
+    else
+        prevDayHigh := na
+        prevDayLow := na
+        prevHighBarIndex := na
+        prevLowBarIndex := na
+        prevHighCrossed := false
+        prevLowCrossed := false
+        prevHighCrossBarIndex := na
+        prevLowCrossBarIndex := na
+
     dayHigh := high
     dayLow := low
     highBarIndex := bar_index
@@ -55,6 +108,21 @@ else
         if na(lowLine)
             lowLine := line.new(lowBarIndex, dayLow, lowBarIndex + 1, dayLow, extend=extend.right, color=lowColor, width=lineWidth, style=line.style_dotted)
 
+prevDayHighCross = not prevHighCrossed and not na(prevDayHigh) and not na(prevHighLine) and high > prevDayHigh
+prevDayLowCross  = not prevLowCrossed and not na(prevDayLow) and not na(prevLowLine) and low < prevDayLow
+
+if prevDayHighCross
+    prevHighCrossed := true
+    prevHighCrossBarIndex := bar_index
+    line.set_x2(prevHighLine, prevHighCrossBarIndex)
+    line.set_extend(prevHighLine, extend.none)
+
+if prevDayLowCross
+    prevLowCrossed := true
+    prevLowCrossBarIndex := bar_index
+    line.set_x2(prevLowLine, prevLowCrossBarIndex)
+    line.set_extend(prevLowLine, extend.none)
+
 if not na(highLine)
     line.set_x1(highLine, highBarIndex)
     line.set_x2(highLine, bar_index)
@@ -90,3 +158,41 @@ if not na(lowLabel)
     label.set_color(lowLabel, color.new(lowColor, 80))
     label.set_size(lowLabel, size.tiny)
     label.set_style(lowLabel, label.style_label_up)
+
+if not na(prevHighLine)
+    line.set_x1(prevHighLine, prevHighBarIndex)
+    line.set_x2(prevHighLine, prevHighCrossed ? prevHighCrossBarIndex : bar_index)
+    line.set_y1(prevHighLine, prevDayHigh)
+    line.set_y2(prevHighLine, prevDayHigh)
+    line.set_color(prevHighLine, prevHighColor)
+    line.set_width(prevHighLine, lineWidth)
+    line.set_style(prevHighLine, line.style_dashed)
+    line.set_extend(prevHighLine, prevHighCrossed ? extend.none : extend.right)
+
+if not na(prevLowLine)
+    line.set_x1(prevLowLine, prevLowBarIndex)
+    line.set_x2(prevLowLine, prevLowCrossed ? prevLowCrossBarIndex : bar_index)
+    line.set_y1(prevLowLine, prevDayLow)
+    line.set_y2(prevLowLine, prevDayLow)
+    line.set_color(prevLowLine, prevLowColor)
+    line.set_width(prevLowLine, lineWidth)
+    line.set_style(prevLowLine, line.style_dashed)
+    line.set_extend(prevLowLine, prevLowCrossed ? extend.none : extend.right)
+
+if not na(prevHighLabel)
+    label.set_x(prevHighLabel, prevHighBarIndex)
+    label.set_y(prevHighLabel, prevDayHigh)
+    label.set_text(prevHighLabel, "PDH")
+    label.set_textcolor(prevHighLabel, prevHighColor)
+    label.set_color(prevHighLabel, color.new(prevHighColor, 80))
+    label.set_size(prevHighLabel, size.tiny)
+    label.set_style(prevHighLabel, label.style_label_down)
+
+if not na(prevLowLabel)
+    label.set_x(prevLowLabel, prevLowBarIndex)
+    label.set_y(prevLowLabel, prevDayLow)
+    label.set_text(prevLowLabel, "PDL")
+    label.set_textcolor(prevLowLabel, prevLowColor)
+    label.set_color(prevLowLabel, color.new(prevLowColor, 80))
+    label.set_size(prevLowLabel, size.tiny)
+    label.set_style(prevLowLabel, label.style_label_up)
