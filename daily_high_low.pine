@@ -1,92 +1,85 @@
 //@version=5
-indicator("Daily High/Low Marker", overlay=true, max_lines_count=2, max_labels_count=2)
+indicator("Session Reference Lines", overlay=true, max_lines_count=20)
 
-highColor = input.color(color.new(color.red, 0), "High Line Color")
-lowColor  = input.color(color.new(color.teal, 0), "Low Line Color")
+lineColor = input.color(color.new(color.gray, 0), "Line Color")
 lineWidth = input.int(1, "Line Width", minval=1, maxval=4)
+showIntraday = input.bool(true, "Show Intraday Reference Lines")
+showWeekOpen = input.bool(true, "Show Weekly Open")
+showMonthOpen = input.bool(true, "Show Monthly Open")
+showQuarterOpen = input.bool(true, "Show Quarterly Open")
+showYearOpen = input.bool(true, "Show Yearly Open")
 
-var float dayHigh = na
-var float dayLow  = na
-var int   highBarIndex = na
-var int   lowBarIndex  = na
-var line  highLine = na
-var line  lowLine  = na
-var label highLabel = na
-var label lowLabel  = na
+var int[] intradayHours = array.from(0, 6, 8, 9, 13)
+var int[] intradayMinutes = array.from(0, 0, 30, 30, 30)
+var line[] intradayLines = array.new_line(array.size(intradayHours), na)
+
+var line weekLine = na
+var line monthLine = na
+var line quarterLine = na
+var line yearLine = na
 
 newDay = ta.change(time("D")) != 0
-startOfDay = newDay or na(dayHigh) or na(dayLow)
+if newDay
+    for i = 0 to array.size(intradayLines) - 1
+        existing = array.get(intradayLines, i)
+        if not na(existing)
+            line.delete(existing)
+        array.set(intradayLines, i, na)
 
-if startOfDay
-    dayHigh := high
-    dayLow := low
-    highBarIndex := bar_index
-    lowBarIndex := bar_index
-
-    if not na(highLine)
-        line.delete(highLine)
-    if not na(lowLine)
-        line.delete(lowLine)
-    if not na(highLabel)
-        label.delete(highLabel)
-    if not na(lowLabel)
-        label.delete(lowLabel)
-
-    highLine := line.new(highBarIndex, dayHigh, highBarIndex + 1, dayHigh, extend=extend.right, color=highColor, width=lineWidth, style=line.style_dotted)
-    lowLine  := line.new(lowBarIndex,  dayLow,  lowBarIndex + 1,  dayLow,  extend=extend.right, color=lowColor,  width=lineWidth, style=line.style_dotted)
-
-    highLabel := label.new(highBarIndex, dayHigh, text="DH", style=label.style_label_down, textcolor=highColor, color=color.new(highColor, 80), size=size.tiny)
-    lowLabel  := label.new(lowBarIndex,  dayLow,  text="DL", style=label.style_label_up,   textcolor=lowColor,  color=color.new(lowColor, 80), size=size.tiny)
+if showIntraday
+    for i = 0 to array.size(intradayHours) - 1
+        targetHour = array.get(intradayHours, i)
+        targetMinute = array.get(intradayMinutes, i)
+        if hour == targetHour and minute == targetMinute
+            existing = array.get(intradayLines, i)
+            if not na(existing)
+                line.delete(existing)
+            intradayLine = line.new(bar_index, open, bar_index + 1, open, extend=extend.right, color=lineColor, width=lineWidth, style=line.style_dotted)
+            array.set(intradayLines, i, intradayLine)
 else
-    if high > dayHigh
-        dayHigh := high
-        highBarIndex := bar_index
-        if not na(highLabel)
-            label.delete(highLabel)
-        highLabel := label.new(highBarIndex, dayHigh, text="DH", style=label.style_label_down, textcolor=highColor, color=color.new(highColor, 80), size=size.tiny)
-        if na(highLine)
-            highLine := line.new(highBarIndex, dayHigh, highBarIndex + 1, dayHigh, extend=extend.right, color=highColor, width=lineWidth, style=line.style_dotted)
-    if low < dayLow or na(dayLow)
-        dayLow := low
-        lowBarIndex := bar_index
-        if not na(lowLabel)
-            label.delete(lowLabel)
-        lowLabel := label.new(lowBarIndex, dayLow, text="DL", style=label.style_label_up, textcolor=lowColor, color=color.new(lowColor, 80), size=size.tiny)
-        if na(lowLine)
-            lowLine := line.new(lowBarIndex, dayLow, lowBarIndex + 1, dayLow, extend=extend.right, color=lowColor, width=lineWidth, style=line.style_dotted)
+    for i = 0 to array.size(intradayLines) - 1
+        existing = array.get(intradayLines, i)
+        if not na(existing)
+            line.delete(existing)
+        array.set(intradayLines, i, na)
 
-if not na(highLine)
-    line.set_x1(highLine, highBarIndex)
-    line.set_x2(highLine, bar_index)
-    line.set_y1(highLine, dayHigh)
-    line.set_y2(highLine, dayHigh)
-    line.set_color(highLine, highColor)
-    line.set_width(highLine, lineWidth)
-    line.set_style(highLine, line.style_dotted)
+newWeek = ta.change(time("W")) != 0
+newMonth = ta.change(time("M")) != 0
+newQuarter = newMonth and (month == 1 or month == 4 or month == 7 or month == 10)
+newYear = year != nz(year[1], year)
 
-if not na(lowLine)
-    line.set_x1(lowLine, lowBarIndex)
-    line.set_x2(lowLine, bar_index)
-    line.set_y1(lowLine, dayLow)
-    line.set_y2(lowLine, dayLow)
-    line.set_color(lowLine, lowColor)
-    line.set_width(lowLine, lineWidth)
-    line.set_style(lowLine, line.style_dotted)
+if showWeekOpen
+    if newWeek
+        if not na(weekLine)
+            line.delete(weekLine)
+        weekLine := line.new(bar_index, open, bar_index + 1, open, extend=extend.right, color=lineColor, width=lineWidth, style=line.style_dotted)
+else if not na(weekLine)
+    line.delete(weekLine)
+    weekLine := na
 
-if not na(highLabel)
-    label.set_x(highLabel, highBarIndex)
-    label.set_y(highLabel, dayHigh)
-    label.set_text(highLabel, "DH")
-    label.set_textcolor(highLabel, highColor)
-    label.set_color(highLabel, color.new(highColor, 80))
-    label.set_size(highLabel, size.tiny)
-    label.set_style(highLabel, label.style_label_down)
+if showMonthOpen
+    if newMonth
+        if not na(monthLine)
+            line.delete(monthLine)
+        monthLine := line.new(bar_index, open, bar_index + 1, open, extend=extend.right, color=lineColor, width=lineWidth, style=line.style_dotted)
+else if not na(monthLine)
+    line.delete(monthLine)
+    monthLine := na
 
-if not na(lowLabel)
-    label.set_x(lowLabel, lowBarIndex)
-    label.set_y(lowLabel, dayLow)
-    label.set_text(lowLabel, "DL")
-    label.set_textcolor(lowLabel, lowColor)
-    label.set_color(lowLabel, color.new(lowColor, 80))
-    label.set_size(lowLabel, size.tiny)
-    label.set_style(lowLabel, label.style_label_up)
+if showQuarterOpen
+    if newQuarter
+        if not na(quarterLine)
+            line.delete(quarterLine)
+        quarterLine := line.new(bar_index, open, bar_index + 1, open, extend=extend.right, color=lineColor, width=lineWidth, style=line.style_dotted)
+else if not na(quarterLine)
+    line.delete(quarterLine)
+    quarterLine := na
+
+if showYearOpen
+    if newYear
+        if not na(yearLine)
+            line.delete(yearLine)
+        yearLine := line.new(bar_index, open, bar_index + 1, open, extend=extend.right, color=lineColor, width=lineWidth, style=line.style_dotted)
+else if not na(yearLine)
+    line.delete(yearLine)
+    yearLine := na
