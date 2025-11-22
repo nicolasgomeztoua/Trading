@@ -1,0 +1,62 @@
+//@version=5
+indicator("Consecutive FVG Alerts", overlay=true)
+
+// Inputs
+sessionTime = input.session("0930-1600", "Trading Session (NY Time)")
+
+// Time Filter
+inSession = not na(time(timeframe.period, sessionTime, "America/New_York"))
+
+// FVG Definitions
+isBullFVG = low > high[2]
+isBearFVG = high < low[2]
+
+// Consecutive Logic
+// We need to know if we are in a sequence (2 or more)
+twoBullInRow = isBullFVG and isBullFVG[1]
+twoBearInRow = isBearFVG and isBearFVG[1]
+
+// --- Alert Logic (Unchanged) ---
+// Fires once when the sequence begins (at #2).
+alertBull = twoBullInRow and not twoBullInRow[1] and inSession
+alertBear = twoBearInRow and not twoBearInRow[1] and inSession
+
+if alertBull
+    alert("Consecutive Bullish FVG detected", alert.freq_once_per_bar_close)
+if alertBear
+    alert("Consecutive Bearish FVG detected", alert.freq_once_per_bar_close)
+
+// --- Moving Label Visuals ---
+// We use var to keep track of the ONE active label ID per sequence direction.
+var label lblBull = na
+var label lblBear = na
+
+// BULLISH Logic
+if inSession
+    if twoBullInRow
+        // We are in a sequence (could be #2, #3, #4...)
+        // Delete the old label from the previous bar so it "moves" here.
+        if not na(lblBull)
+            label.delete(lblBull)
+        
+        // Create new label on current bar
+        lblBull := label.new(bar_index, low, text="2x Bull", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small, yloc=yloc.belowbar)
+        
+    else
+        // Not in a sequence (or sequence ended). 
+        // We don't delete the LAST label here, so it stays on the final candle of the chain.
+        // We just reset our tracking variable so the next NEW sequence starts fresh.
+        // However, if you want the label to stay strictly on the last VALID FVG, we just leave it alone.
+        lblBull := na
+
+// BEARISH Logic
+if inSession
+    if twoBearInRow
+        // We are in a sequence
+        if not na(lblBear)
+            label.delete(lblBear)
+            
+        lblBear := label.new(bar_index, high, text="2x Bear", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small, yloc=yloc.abovebar)
+        
+    else
+        lblBear := na
