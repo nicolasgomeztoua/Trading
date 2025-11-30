@@ -1,11 +1,35 @@
 //@version=5
-indicator("Daily High/Low Marker", overlay=true, max_lines_count=4, max_labels_count=4)
+indicator("Daily High/Low Marker", overlay=true, max_lines_count=6, max_labels_count=6)
 
-highColor     = input.color(color.new(color.red, 0), "High Line Color")
-lowColor      = input.color(color.new(color.teal, 0), "Low Line Color")
-prevHighColor = input.color(color.new(color.orange, 0), "Previous High Line Color")
-prevLowColor  = input.color(color.new(color.purple, 0), "Previous Low Line Color")
-lineWidth     = input.int(1, "Line Width", minval=1, maxval=4)
+// Current Day Settings
+highColor     = input.color(color.new(color.red, 0), "High Line Color", group="Current Day")
+lowColor      = input.color(color.new(color.teal, 0), "Low Line Color", group="Current Day")
+dayLineStyle  = input.string("Dotted", "Line Style", options=["Solid", "Dashed", "Dotted"], group="Current Day")
+
+// Previous Day Settings
+prevHighColor = input.color(color.new(color.orange, 0), "High Line Color", group="Previous Day")
+prevLowColor  = input.color(color.new(color.purple, 0), "Low Line Color", group="Previous Day")
+prevDayLineStyle = input.string("Dashed", "Line Style", options=["Solid", "Dashed", "Dotted"], group="Previous Day")
+
+// Previous Week Settings
+prevWeekHighColor = input.color(color.new(color.blue, 0), "High Line Color", group="Previous Week")
+prevWeekLowColor  = input.color(color.new(color.lime, 0), "Low Line Color", group="Previous Week")
+prevWeekLineStyle = input.string("Solid", "Line Style", options=["Solid", "Dashed", "Dotted"], group="Previous Week")
+
+// General Settings
+lineWidth     = input.int(1, "Line Width", minval=1, maxval=4, group="General")
+
+// Helper function to convert string to line style
+getLineStyle(styleStr) =>
+    switch styleStr
+        "Solid" => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+dayStyle = getLineStyle(dayLineStyle)
+prevDayStyle = getLineStyle(prevDayLineStyle)
+prevWeekStyle = getLineStyle(prevWeekLineStyle)
 
 var float dayHigh = na
 var float dayLow  = na
@@ -28,7 +52,26 @@ var bool  prevLowCrossed  = false
 var int   prevHighCrossBarIndex = na
 var int   prevLowCrossBarIndex  = na
 
+// Weekly tracking variables (using time instead of bar_index to avoid distance limitations)
+var float weekHigh = na
+var float weekLow  = na
+var int   weekHighTime = na
+var int   weekLowTime  = na
+var float prevWeekHigh = na
+var float prevWeekLow  = na
+var int   prevWeekHighTime = na
+var int   prevWeekLowTime  = na
+var line  prevWeekHighLine = na
+var line  prevWeekLowLine  = na
+var label prevWeekHighLabel = na
+var label prevWeekLowLabel  = na
+var bool  prevWeekHighCrossed = false
+var bool  prevWeekLowCrossed  = false
+var int   prevWeekHighCrossTime = na
+var int   prevWeekLowCrossTime  = na
+
 newDay = ta.change(time("D")) != 0
+newWeek = ta.change(time("W")) != 0
 startOfDay = newDay or na(dayHigh) or na(dayLow)
 
 if startOfDay
@@ -56,8 +99,8 @@ if startOfDay
         prevHighBarIndex := highBarIndex
         prevLowBarIndex := lowBarIndex
 
-        prevHighLine := line.new(prevHighBarIndex, prevDayHigh, prevHighBarIndex + 1, prevDayHigh, extend=extend.right, color=prevHighColor, width=lineWidth, style=line.style_dashed)
-        prevLowLine  := line.new(prevLowBarIndex,  prevDayLow,  prevLowBarIndex + 1,  prevDayLow,  extend=extend.right, color=prevLowColor,  width=lineWidth, style=line.style_dashed)
+        prevHighLine := line.new(prevHighBarIndex, prevDayHigh, prevHighBarIndex + 1, prevDayHigh, extend=extend.right, color=prevHighColor, width=lineWidth, style=prevDayStyle)
+        prevLowLine  := line.new(prevLowBarIndex,  prevDayLow,  prevLowBarIndex + 1,  prevDayLow,  extend=extend.right, color=prevLowColor,  width=lineWidth, style=prevDayStyle)
 
         prevHighLabel := label.new(prevHighBarIndex, prevDayHigh, text="PDH", style=label.style_label_down, textcolor=prevHighColor, color=color.new(prevHighColor, 80), size=size.tiny)
         prevLowLabel  := label.new(prevLowBarIndex,  prevDayLow,  text="PDL", style=label.style_label_up,   textcolor=prevLowColor,  color=color.new(prevLowColor, 80), size=size.tiny)
@@ -85,8 +128,8 @@ if startOfDay
     if not na(lowLabel)
         label.delete(lowLabel)
 
-    highLine := line.new(highBarIndex, dayHigh, highBarIndex + 1, dayHigh, extend=extend.right, color=highColor, width=lineWidth, style=line.style_dotted)
-    lowLine  := line.new(lowBarIndex,  dayLow,  lowBarIndex + 1,  dayLow,  extend=extend.right, color=lowColor,  width=lineWidth, style=line.style_dotted)
+    highLine := line.new(highBarIndex, dayHigh, highBarIndex + 1, dayHigh, extend=extend.right, color=highColor, width=lineWidth, style=dayStyle)
+    lowLine  := line.new(lowBarIndex,  dayLow,  lowBarIndex + 1,  dayLow,  extend=extend.right, color=lowColor,  width=lineWidth, style=dayStyle)
 
     highLabel := label.new(highBarIndex, dayHigh, text="DH", style=label.style_label_down, textcolor=highColor, color=color.new(highColor, 80), size=size.tiny)
     lowLabel  := label.new(lowBarIndex,  dayLow,  text="DL", style=label.style_label_up,   textcolor=lowColor,  color=color.new(lowColor, 80), size=size.tiny)
@@ -98,7 +141,7 @@ else
             label.delete(highLabel)
         highLabel := label.new(highBarIndex, dayHigh, text="DH", style=label.style_label_down, textcolor=highColor, color=color.new(highColor, 80), size=size.tiny)
         if na(highLine)
-            highLine := line.new(highBarIndex, dayHigh, highBarIndex + 1, dayHigh, extend=extend.right, color=highColor, width=lineWidth, style=line.style_dotted)
+            highLine := line.new(highBarIndex, dayHigh, highBarIndex + 1, dayHigh, extend=extend.right, color=highColor, width=lineWidth, style=dayStyle)
     if low < dayLow or na(dayLow)
         dayLow := low
         lowBarIndex := bar_index
@@ -106,7 +149,80 @@ else
             label.delete(lowLabel)
         lowLabel := label.new(lowBarIndex, dayLow, text="DL", style=label.style_label_up, textcolor=lowColor, color=color.new(lowColor, 80), size=size.tiny)
         if na(lowLine)
-            lowLine := line.new(lowBarIndex, dayLow, lowBarIndex + 1, dayLow, extend=extend.right, color=lowColor, width=lineWidth, style=line.style_dotted)
+            lowLine := line.new(lowBarIndex, dayLow, lowBarIndex + 1, dayLow, extend=extend.right, color=lowColor, width=lineWidth, style=dayStyle)
+
+// Weekly high/low tracking
+if newWeek
+    // Clean up old previous week lines/labels
+    if not na(prevWeekHighLine)
+        line.delete(prevWeekHighLine)
+    if not na(prevWeekLowLine)
+        line.delete(prevWeekLowLine)
+    if not na(prevWeekHighLabel)
+        label.delete(prevWeekHighLabel)
+    if not na(prevWeekLowLabel)
+        label.delete(prevWeekLowLabel)
+
+    prevWeekHighLine := na
+    prevWeekLowLine := na
+    prevWeekHighLabel := na
+    prevWeekLowLabel := na
+    prevWeekHighCrossed := false
+    prevWeekLowCrossed := false
+    prevWeekHighCrossTime := na
+    prevWeekLowCrossTime := na
+
+    // Store previous week's high/low if we have valid data
+    if not na(weekHigh) and not na(weekLow) and not na(weekHighTime) and not na(weekLowTime)
+        prevWeekHigh := weekHigh
+        prevWeekLow := weekLow
+        prevWeekHighTime := weekHighTime
+        prevWeekLowTime := weekLowTime
+
+        prevWeekHighLine := line.new(prevWeekHighTime, prevWeekHigh, time, prevWeekHigh, extend=extend.right, color=prevWeekHighColor, width=lineWidth, style=prevWeekStyle, xloc=xloc.bar_time)
+        prevWeekLowLine  := line.new(prevWeekLowTime,  prevWeekLow,  time, prevWeekLow,  extend=extend.right, color=prevWeekLowColor,  width=lineWidth, style=prevWeekStyle, xloc=xloc.bar_time)
+
+        prevWeekHighLabel := label.new(prevWeekHighTime, prevWeekHigh, text="PWH", style=label.style_label_down, textcolor=prevWeekHighColor, color=color.new(prevWeekHighColor, 80), size=size.tiny, xloc=xloc.bar_time)
+        prevWeekLowLabel  := label.new(prevWeekLowTime,  prevWeekLow,  text="PWL", style=label.style_label_up,   textcolor=prevWeekLowColor,  color=color.new(prevWeekLowColor, 80), size=size.tiny, xloc=xloc.bar_time)
+    else
+        prevWeekHigh := na
+        prevWeekLow := na
+        prevWeekHighTime := na
+        prevWeekLowTime := na
+        prevWeekHighCrossed := false
+        prevWeekLowCrossed := false
+        prevWeekHighCrossTime := na
+        prevWeekLowCrossTime := na
+
+    // Reset current week tracking
+    weekHigh := high
+    weekLow := low
+    weekHighTime := time
+    weekLowTime := time
+else
+    // Update current week high/low
+    if high > weekHigh or na(weekHigh)
+        weekHigh := high
+        weekHighTime := time
+    if low < weekLow or na(weekLow)
+        weekLow := low
+        weekLowTime := time
+
+// Previous week high/low cross detection
+prevWeekHighCross = not prevWeekHighCrossed and not na(prevWeekHigh) and not na(prevWeekHighLine) and high > prevWeekHigh
+prevWeekLowCross  = not prevWeekLowCrossed and not na(prevWeekLow) and not na(prevWeekLowLine) and low < prevWeekLow
+
+if prevWeekHighCross
+    prevWeekHighCrossed := true
+    prevWeekHighCrossTime := time
+    line.set_x2(prevWeekHighLine, prevWeekHighCrossTime)
+    line.set_extend(prevWeekHighLine, extend.none)
+
+if prevWeekLowCross
+    prevWeekLowCrossed := true
+    prevWeekLowCrossTime := time
+    line.set_x2(prevWeekLowLine, prevWeekLowCrossTime)
+    line.set_extend(prevWeekLowLine, extend.none)
 
 prevDayHighCross = not prevHighCrossed and not na(prevDayHigh) and not na(prevHighLine) and high > prevDayHigh
 prevDayLowCross  = not prevLowCrossed and not na(prevDayLow) and not na(prevLowLine) and low < prevDayLow
@@ -130,7 +246,7 @@ if not na(highLine)
     line.set_y2(highLine, dayHigh)
     line.set_color(highLine, highColor)
     line.set_width(highLine, lineWidth)
-    line.set_style(highLine, line.style_dotted)
+    line.set_style(highLine, dayStyle)
 
 if not na(lowLine)
     line.set_x1(lowLine, lowBarIndex)
@@ -139,7 +255,7 @@ if not na(lowLine)
     line.set_y2(lowLine, dayLow)
     line.set_color(lowLine, lowColor)
     line.set_width(lowLine, lineWidth)
-    line.set_style(lowLine, line.style_dotted)
+    line.set_style(lowLine, dayStyle)
 
 if not na(highLabel)
     label.set_x(highLabel, highBarIndex)
@@ -166,7 +282,7 @@ if not na(prevHighLine)
     line.set_y2(prevHighLine, prevDayHigh)
     line.set_color(prevHighLine, prevHighColor)
     line.set_width(prevHighLine, lineWidth)
-    line.set_style(prevHighLine, line.style_dashed)
+    line.set_style(prevHighLine, prevDayStyle)
     line.set_extend(prevHighLine, prevHighCrossed ? extend.none : extend.right)
 
 if not na(prevLowLine)
@@ -176,7 +292,7 @@ if not na(prevLowLine)
     line.set_y2(prevLowLine, prevDayLow)
     line.set_color(prevLowLine, prevLowColor)
     line.set_width(prevLowLine, lineWidth)
-    line.set_style(prevLowLine, line.style_dashed)
+    line.set_style(prevLowLine, prevDayStyle)
     line.set_extend(prevLowLine, prevLowCrossed ? extend.none : extend.right)
 
 if not na(prevHighLabel)
@@ -196,3 +312,45 @@ if not na(prevLowLabel)
     label.set_color(prevLowLabel, color.new(prevLowColor, 80))
     label.set_size(prevLowLabel, size.tiny)
     label.set_style(prevLowLabel, label.style_label_up)
+
+// Update previous week high line (using time-based xloc)
+if not na(prevWeekHighLine)
+    line.set_x1(prevWeekHighLine, prevWeekHighTime)
+    line.set_x2(prevWeekHighLine, prevWeekHighCrossed ? prevWeekHighCrossTime : time)
+    line.set_y1(prevWeekHighLine, prevWeekHigh)
+    line.set_y2(prevWeekHighLine, prevWeekHigh)
+    line.set_color(prevWeekHighLine, prevWeekHighColor)
+    line.set_width(prevWeekHighLine, lineWidth)
+    line.set_style(prevWeekHighLine, prevWeekStyle)
+    line.set_extend(prevWeekHighLine, prevWeekHighCrossed ? extend.none : extend.right)
+
+// Update previous week low line (using time-based xloc)
+if not na(prevWeekLowLine)
+    line.set_x1(prevWeekLowLine, prevWeekLowTime)
+    line.set_x2(prevWeekLowLine, prevWeekLowCrossed ? prevWeekLowCrossTime : time)
+    line.set_y1(prevWeekLowLine, prevWeekLow)
+    line.set_y2(prevWeekLowLine, prevWeekLow)
+    line.set_color(prevWeekLowLine, prevWeekLowColor)
+    line.set_width(prevWeekLowLine, lineWidth)
+    line.set_style(prevWeekLowLine, prevWeekStyle)
+    line.set_extend(prevWeekLowLine, prevWeekLowCrossed ? extend.none : extend.right)
+
+// Update previous week high label (using time-based xloc)
+if not na(prevWeekHighLabel)
+    label.set_x(prevWeekHighLabel, prevWeekHighTime)
+    label.set_y(prevWeekHighLabel, prevWeekHigh)
+    label.set_text(prevWeekHighLabel, "PWH")
+    label.set_textcolor(prevWeekHighLabel, prevWeekHighColor)
+    label.set_color(prevWeekHighLabel, color.new(prevWeekHighColor, 80))
+    label.set_size(prevWeekHighLabel, size.tiny)
+    label.set_style(prevWeekHighLabel, label.style_label_down)
+
+// Update previous week low label (using time-based xloc)
+if not na(prevWeekLowLabel)
+    label.set_x(prevWeekLowLabel, prevWeekLowTime)
+    label.set_y(prevWeekLowLabel, prevWeekLow)
+    label.set_text(prevWeekLowLabel, "PWL")
+    label.set_textcolor(prevWeekLowLabel, prevWeekLowColor)
+    label.set_color(prevWeekLowLabel, color.new(prevWeekLowColor, 80))
+    label.set_size(prevWeekLowLabel, size.tiny)
+    label.set_style(prevWeekLowLabel, label.style_label_up)
