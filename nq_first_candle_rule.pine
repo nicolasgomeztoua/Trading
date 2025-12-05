@@ -1,0 +1,262 @@
+//@version=6
+indicator("NQ First Candle Rule", overlay=true, max_labels_count=500, max_lines_count=500)
+
+//--------------
+// Inputs
+//--------------
+isNQOnlyInput = input.bool(true, "Restrict to NQ1! only", inline="sym")
+allowLong     = input.bool(true,  "Longs", inline="dir")
+allowShort    = input.bool(true,  "Shorts", inline="dir")
+rMultiple     = input.float(2.0,  "Target (R)", minval=0.5, step=0.5)
+sameBarPref   = input.string("SL-first", "Same-bar precedence", options=["SL-first", "TP-first"]) // if both hit on same bar
+
+showOR        = input.bool(true,  "Show Opening Range")
+showFVG       = input.bool(true,  "Show FVG box")
+showLevels    = input.bool(true,  "Show Entry/SL/TP")
+
+//--------------
+// Symbol guard
+//--------------
+stdTicker = ticker.standard(syminfo.tickerid)
+symOK = (syminfo.ticker == "NQ1!") or str.endswith(stdTicker, ":NQ1!")
+symAllowed = not isNQOnlyInput or symOK
+
+//--------------
+// NY sessions and helper series (internally operate on 5m)
+//--------------
+// Use CME (Central Time) sessions; 08:30 CT corresponds to 09:30 ET
+var string CME_ALLDAY = "0000-2359:1234567"
+var string CME_OR     = "0830-0845:1234567"   // 09:30-09:45 ET equivalent
+var string CME_BEFORE_NOON = "0000-1100:1234567"  // up to 12:00 ET (11:00 CT)
+
+// 5m series
+hi5  = request.security(syminfo.tickerid, "5", high,  barmerge.gaps_off, barmerge.lookahead_off)
+lo5  = request.security(syminfo.tickerid, "5", low,   barmerge.gaps_off, barmerge.lookahead_off)
+op5  = request.security(syminfo.tickerid, "5", open,  barmerge.gaps_off, barmerge.lookahead_off)
+cl5  = request.security(syminfo.tickerid, "5", close, barmerge.gaps_off, barmerge.lookahead_off)
+tm5  = request.security(syminfo.tickerid, "5", time,  barmerge.gaps_off, barmerge.lookahead_off)
+
+// NY day id: use daily time key with NY session. Constant within a NY trading day.
+nyDayId = time("D", CME_ALLDAY)
+isNewNYDay = ta.change(nyDayId) != 0
+
+// OR window detector on 5m
+inOR5 = request.security(syminfo.tickerid, "5", not na(time("5", CME_OR)), barmerge.gaps_off, barmerge.lookahead_off)
+beforeNoon5 = request.security(syminfo.tickerid, "5", not na(time("5", CME_BEFORE_NOON)), barmerge.gaps_off, barmerge.lookahead_off)
+
+//--------------
+// Opening Range computation (accumulate 09:30–09:45 bars)
+//--------------
+var float orHigh = na
+var float orLow  = na
+var float orHiAcc = na
+var float orLoAcc = na
+var bool  orReady = false
+
+// Reset at NY day start
+if isNewNYDay
+    orHigh := na
+    orLow  := na
+    orHiAcc := na
+    orLoAcc := na
+    orReady := false
+
+// Accumulate OR highs/lows while in OR window; finalize on first bar after OR ends
+wasInOR5 = inOR5[1]
+if inOR5
+    orHiAcc := na(orHiAcc) ? hi5 : math.max(orHiAcc, hi5)
+    orLoAcc := na(orLoAcc) ? lo5 : math.min(orLoAcc, lo5)
+if (not inOR5) and wasInOR5
+    orHigh := orHiAcc
+    orLow  := orLoAcc
+    orReady := true
+
+//--------------
+// FVG detection: 3-candle fair value gap and OR breakout confirmation
+//--------------
+isBullFVG = orReady and (hi5[2] < lo5)
+isBearFVG = orReady and (lo5[2] > hi5)
+
+closesBeyondORUp   = orReady and (cl5 > orHigh or cl5[1] > orHigh or cl5[2] > orHigh)
+closesBeyondORDown = orReady and (cl5 < orLow  or cl5[1] < orLow  or cl5[2] < orLow)
+
+bullSetup = isBullFVG and closesBeyondORUp and allowLong and symAllowed
+bearSetup = isBearFVG and closesBeyondORDown and allowShort and symAllowed
+
+// Entry/SL/TP from FVG (nearest gap boundary; SL at c1 extreme)
+longEntry = lo5
+longSL    = lo5[2]
+longR     = longEntry - longSL
+longTP    = longEntry + longR * rMultiple
+
+shortEntry = hi5
+shortSL    = hi5[2]
+shortR     = shortSL - shortEntry
+shortTP    = shortEntry - shortR * rMultiple
+
+//--------------
+// Per-day state machine and order/trade tracking on 5m
+// 0 WAIT_SETUP -> 1 WAIT_FILL -> 2 IN_TRADE -> 3 DONE
+//--------------
+var int   state = 0
+var float pendEntry = na
+var float pendSL    = na
+var float pendTP    = na
+var int   pendDir   = 0  // +1 long, -1 short
+var bool  filled    = false
+var float fillPrice = na
+var bool  hitSL     = false
+var bool  hitTP     = false
+var int   orderTime = na
+
+// Reset day state
+if isNewNYDay
+    state := 0
+    pendEntry := na
+    pendSL := na
+    pendTP := na
+    pendDir := 0
+    filled := false
+    fillPrice := na
+    hitSL := false
+    hitTP := false
+    orderTime := na
+
+// Advance to WAIT_SETUP after OR ready
+if state == 0 and orReady
+    state := 1
+
+// First valid setup after OR: create pending order
+newSetup = (state == 1) and (bullSetup or bearSetup)
+if newSetup
+    if bullSetup
+        pendEntry := longEntry
+        pendSL    := longSL
+        pendTP    := longTP
+        pendDir   := +1
+    else
+        pendEntry := shortEntry
+        pendSL    := shortSL
+        pendTP    := shortTP
+        pendDir   := -1
+    orderTime := tm5
+    state := 1 // remain in WAIT_FILL state but mark order as pending
+
+// Cancel pending order at 12:00 ET if not filled
+if state == 1 and not beforeNoon5
+    pendEntry := na
+    pendSL    := na
+    pendTP    := na
+    pendDir   := 0
+    orderTime := na
+    // if no trade taken, the day ends for the strategy
+    state := 3
+
+// Fill logic (only before 12:00)
+canTryFill = (state == 1) and beforeNoon5 and not filled and pendDir != 0 and not na(pendEntry) and not na(orderTime) and tm5 > orderTime
+if canTryFill
+    // Long: limit buy fills when price trades to or below entry; Short: limit sell fills when trades to or above entry
+    willFill = (pendDir == +1 and lo5 <= pendEntry) or (pendDir == -1 and hi5 >= pendEntry)
+    if willFill
+        // Execute at better of entry and open if bar gapped beyond limit
+        fillPrice := pendDir == +1 ? math.min(op5, pendEntry) : math.max(op5, pendEntry)
+        filled := true
+        state := 2
+
+// SL/TP monitoring after fill (no time stop)
+if state == 2 and filled and not (hitSL or hitTP)
+    // Evaluate same-bar or subsequent bars
+    longHitsSL = pendDir == +1 and lo5 <= pendSL
+    longHitsTP = pendDir == +1 and hi5 >= pendTP
+    shortHitsSL = pendDir == -1 and hi5 >= pendSL
+    shortHitsTP = pendDir == -1 and lo5 <= pendTP
+    bothHit = (pendDir == +1 and longHitsSL and longHitsTP) or (pendDir == -1 and shortHitsSL and shortHitsTP)
+    if bothHit
+        if sameBarPref == "SL-first"
+            hitSL := true
+        else
+            hitTP := true
+    else
+        if (longHitsSL or shortHitsSL)
+            hitSL := true
+        if (longHitsTP or shortHitsTP)
+            hitTP := true
+    if hitSL or hitTP
+        state := 3
+        orderTime := na
+
+//--------------
+// Visuals
+//--------------
+plotORHigh = showOR ? orHigh : na
+plotORLow  = showOR ? orLow  : na
+plot(plotORHigh, title="OR High", color=color.new(color.teal, 0), linewidth=2, style=plot.style_linebr)
+plot(plotORLow,  title="OR Low",  color=color.new(color.purple, 0), linewidth=2, style=plot.style_linebr)
+
+// FVG box drawing
+var box fvgBox = na
+if showFVG
+    // Create/refresh FVG box on new setup
+    if newSetup
+        if not na(fvgBox)
+            box.delete(fvgBox)
+        // For visualization, use actual gap boundaries: long [high(c1), low(c3)], short [high(c3), low(c1)]
+        longGapTop = hi5[2]
+        longGapBot = lo5
+        shortGapTop = hi5
+        shortGapBot = lo5[2]
+        boxTop = pendDir == +1 ? longGapTop : shortGapTop
+        boxBot = pendDir == +1 ? longGapBot : shortGapBot
+        fvgBox := box.new(left=bar_index, top=boxTop, right=bar_index + 1, bottom=boxBot, bgcolor=color.new(color.blue, 85), border_color=color.new(color.blue, 0))
+    else if not na(fvgBox) and state <= 2
+        // extend box to current bar while pending or in trade
+        box.set_right(fvgBox, bar_index)
+    else if not na(fvgBox) and state == 3 and (hitSL or hitTP)
+        // keep final size
+        na
+
+// Alerts series (must be defined before markers)
+entryFilledAlert = filled and not filled[1]
+tpHitAlert       = hitTP and not hitTP[1]
+slHitAlert       = hitSL and not hitSL[1]
+
+// Entry/SL/TP plots
+entryPlot = showLevels and (state >= 1 and not na(pendEntry)) ? pendEntry : na
+slPlot    = showLevels and (state >= 1 and not na(pendSL))    ? pendSL    : na
+tpPlot    = showLevels and (state >= 1 and not na(pendTP))    ? pendTP    : na
+plot(entryPlot, title="Entry", color=color.new(color.yellow, 0), style=plot.style_linebr)
+plot(slPlot,    title="Stop",  color=color.new(color.red, 0),    style=plot.style_linebr)
+plot(tpPlot,    title="Target",color=color.new(color.green, 0),  style=plot.style_linebr)
+
+// Markers for fill/exit
+plotshape(entryFilledAlert, title="Entry Filled", style=shape.triangleup, color=color.new(color.yellow, 0), location=location.abovebar, size=size.tiny, text="Filled")
+plotshape(tpHitAlert,       title="TP Hit",       style=shape.circle,     color=color.new(color.green, 0),  location=location.abovebar, size=size.tiny, text="TP")
+plotshape(slHitAlert,       title="SL Hit",       style=shape.circle,     color=color.new(color.red, 0),    location=location.belowbar, size=size.tiny, text="SL")
+
+alertcondition(entryFilledAlert, "NQ First Candle: Entry filled", "Entry filled {{ticker}} at {{close}}")
+alertcondition(tpHitAlert,       "NQ First Candle: Target hit",  "Target hit {{ticker}} at {{close}}")
+alertcondition(slHitAlert,       "NQ First Candle: Stop hit",    "Stop hit {{ticker}} at {{close}}")
+
+// Optional: dynamic messages for "Any alert() function call"
+if entryFilledAlert
+    dirTxt = pendDir == +1 ? "LONG" : "SHORT"
+    alert("Entry filled " + syminfo.ticker + " " + dirTxt + " @ " + str.tostring(fillPrice) + " SL=" + str.tostring(pendSL) + " TP=" + str.tostring(pendTP) + " R=" + str.tostring(rMultiple), alert.freq_once_per_bar)
+if tpHitAlert
+    alert("Target hit " + syminfo.ticker + " @ " + str.tostring(pendTP), alert.freq_once_per_bar)
+if slHitAlert
+    alert("Stop hit " + syminfo.ticker + " @ " + str.tostring(pendSL), alert.freq_once_per_bar)
+
+// Disable signals/visuals if symbol not allowed
+if not symAllowed
+    label.new(bar_index, close, text="Symbol not allowed. Use NQ1!", style=label.style_label_down, color=color.new(color.gray, 0))
+    // Hide levels and boxes
+    orHigh := na
+    orLow  := na
+    pendEntry := na
+    pendSL := na
+    pendTP := na
+    if not na(fvgBox)
+        box.delete(fvgBox)
+        fvgBox := na
+
+

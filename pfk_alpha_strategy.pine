@@ -1,0 +1,332 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © PFK Alpha Strategy - Based on propfirmkid's day trading model
+
+//@version=5
+strategy("PFK Alpha Strategy", 
+     overlay=true, 
+     pyramiding=0,
+     default_qty_type=strategy.percent_of_equity, 
+     default_qty_value=100,
+     commission_type=strategy.commission.percent,
+     commission_value=0,
+     initial_capital=10000)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// EMA Settings
+i_emaFast       = input.int(9, "Fast EMA Length", minval=1, group="EMA Settings")
+i_emaSlow       = input.int(20, "Slow EMA Length", minval=1, group="EMA Settings")
+
+// Risk Management
+i_riskPercent   = input.float(1.0, "Risk Per Trade (%)", minval=0.1, maxval=10, step=0.1, group="Risk Management", tooltip="Percentage of account to risk per trade")
+i_rrRatio       = input.float(1.5, "Risk:Reward Ratio", minval=0.1, maxval=10, step=0.1, group="Risk Management", tooltip="Take Profit as multiple of Stop Loss (e.g., 0.5 = half SL, 2.0 = 2x SL)")
+i_atrMultiplier = input.float(1.0, "ATR Multiplier for SL", minval=0.1, step=0.1, group="Risk Management")
+i_atrLength     = input.int(14, "ATR Length", minval=1, group="Risk Management")
+i_maxTradesDay  = input.int(3, "Max Trades Per Day", minval=1, maxval=20, group="Risk Management", tooltip="Maximum number of trades allowed per day")
+
+// Time Filter (EST/New York) - ONLY TRADE DURING THESE HOURS
+i_useTimeFilter = input.bool(true, "Enable Time Filter", group="Time Filter")
+i_tradeStart    = input.int(9, "Start Trading (EST Hour)", minval=0, maxval=23, group="Time Filter", tooltip="Hour to START trading (e.g., 9 = 9am EST)")
+i_tradeEnd      = input.int(16, "Stop Trading (EST Hour)", minval=0, maxval=23, group="Time Filter", tooltip="Hour to STOP trading (e.g., 16 = 4pm EST)")
+
+// Day Filter - Select which days to trade
+i_useDayFilter   = input.bool(true, "Enable Day Filter", group="Day Filter")
+i_tradeMonday    = input.bool(true, "Trade Monday", group="Day Filter")
+i_tradeTuesday   = input.bool(true, "Trade Tuesday", group="Day Filter")
+i_tradeWednesday = input.bool(true, "Trade Wednesday", group="Day Filter")
+i_tradeThursday  = input.bool(true, "Trade Thursday", group="Day Filter")
+i_tradeFriday    = input.bool(true, "Trade Friday", group="Day Filter")
+i_tradeSaturday  = input.bool(false, "Trade Saturday", group="Day Filter")
+i_tradeSunday    = input.bool(false, "Trade Sunday", group="Day Filter")
+
+// Blocked Dates - Holidays and specific dates to avoid (MMDD format, comma separated)
+i_useBlockedDates = input.bool(true, "Enable Blocked Dates", group="Blocked Dates")
+i_blockedDates    = input.string("1225,0101,0704", "Blocked Dates (MMDD)", group="Blocked Dates", tooltip="Enter dates to skip in MMDD format, comma separated. Example: 1225,0101,1126,1127")
+
+// Visual Options
+i_showEmas      = input.bool(true, "Show 5M EMAs", group="Visuals")
+i_showVwap      = input.bool(true, "Show VWAP", group="Visuals")
+i_showDailyOpen = input.bool(true, "Show Daily Open", group="Visuals")
+i_show1hEma     = input.bool(true, "Show 1H 20 EMA Level", group="Visuals")
+i_showBgBias    = input.bool(true, "Show Background Bias Color", group="Visuals")
+i_showTable     = input.bool(true, "Show Info Table", group="Visuals")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME DATA (1H)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// 1H EMA calculations
+ema1hFast = request.security(syminfo.tickerid, "60", ta.ema(close, i_emaFast), lookahead=barmerge.lookahead_off)
+ema1hSlow = request.security(syminfo.tickerid, "60", ta.ema(close, i_emaSlow), lookahead=barmerge.lookahead_off)
+
+// 1H ATR for stop loss calculation
+atr1h = request.security(syminfo.tickerid, "60", ta.atr(i_atrLength), lookahead=barmerge.lookahead_off)
+
+// 1H Bias determination
+bullishBias = ema1hFast > ema1hSlow
+bearishBias = ema1hFast < ema1hSlow
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CHART TIMEFRAME DATA (5M EMAs)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// 5M EMA calculations (chart timeframe)
+emaFast = ta.ema(close, i_emaFast)
+emaSlow = ta.ema(close, i_emaSlow)
+
+// EMA Crossover signals
+bullishCross = ta.crossover(emaFast, emaSlow)
+bearishCross = ta.crossunder(emaFast, emaSlow)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VWAP CALCULATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// VWAP resets daily (anchored to session)
+vwapValue = ta.vwap(hlc3)
+
+// Price position relative to VWAP
+aboveVwap = close > vwapValue
+belowVwap = close < vwapValue
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DAILY OPEN PRICE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get daily open price
+dailyOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TIME FILTER (EST/New York) - FIXED VERSION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get current bar's hour in New York timezone
+nyHour = hour(time, "America/New_York")
+
+// Determine if we're in the trading window
+// Handles both same-day (9-16) and overnight (22-6) ranges
+inTradingWindow = i_tradeStart < i_tradeEnd ? 
+                  (nyHour >= i_tradeStart and nyHour < i_tradeEnd) : 
+                  (nyHour >= i_tradeStart or nyHour < i_tradeEnd)
+
+// Trading allowed based on time (respects the enable toggle)
+timeAllowed = i_useTimeFilter ? inTradingWindow : true
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DAY OF WEEK FILTER
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get current day of week in NY timezone
+currentDayOfWeek = dayofweek(time, "America/New_York")
+
+// Check if trading is allowed on current day
+dayAllowedCheck = switch currentDayOfWeek
+    dayofweek.sunday    => i_tradeSunday
+    dayofweek.monday    => i_tradeMonday
+    dayofweek.tuesday   => i_tradeTuesday
+    dayofweek.wednesday => i_tradeWednesday
+    dayofweek.thursday  => i_tradeThursday
+    dayofweek.friday    => i_tradeFriday
+    dayofweek.saturday  => i_tradeSaturday
+    => false
+
+dayAllowed = i_useDayFilter ? dayAllowedCheck : true
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BLOCKED DATES FILTER (Holidays, etc.)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get current date in MMDD format (NY timezone)
+currentMonth = month(time, "America/New_York")
+currentDay = dayofmonth(time, "America/New_York")
+currentMMDD = str.tostring(currentMonth, "00") + str.tostring(currentDay, "00")
+
+// Check if current date is in blocked dates list
+isBlockedDate = i_useBlockedDates ? str.contains(i_blockedDates, currentMMDD) : false
+
+// Combined filter: time AND day AND not blocked date
+tradingAllowed = timeAllowed and dayAllowed and not isBlockedDate
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TRADES PER DAY TRACKING
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Detect new day (using NY timezone)
+nyDay = dayofmonth(time, "America/New_York")
+newDay = ta.change(nyDay) != 0
+
+// Track trades taken today
+var int tradesToday = 0
+
+// Reset counter on new day
+if newDay
+    tradesToday := 0
+
+// Check if we can still trade today
+canTradeToday = tradesToday < i_maxTradesDay
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENTRY CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Long Entry Conditions:
+// 1. 1H bullish bias (9 EMA > 20 EMA)
+// 2. 5M bullish crossover (9 crosses above 20)
+// 3. Price > VWAP
+// 4. Price > 1H 20 EMA
+// 5. Within trading time window
+// 6. Under daily trade limit
+
+longCondition = bullishBias and bullishCross and aboveVwap and close > ema1hSlow and tradingAllowed and canTradeToday
+
+// Short Entry Conditions:
+// 1. 1H bearish bias (9 EMA < 20 EMA)
+// 2. 5M bearish crossover (9 crosses below 20)
+// 3. Price < VWAP
+// 4. Price < 1H 20 EMA
+// 5. Within trading time window
+// 6. Under daily trade limit
+
+shortCondition = bearishBias and bearishCross and belowVwap and close < ema1hSlow and tradingAllowed and canTradeToday
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RISK MANAGEMENT - PERCENTAGE BASED POSITION SIZING
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Calculate stop loss distance based on 1H ATR
+slDistance = atr1h * i_atrMultiplier
+
+// Calculate take profit distance based on R:R ratio
+tpDistance = slDistance * i_rrRatio
+
+// Calculate risk amount in dollars
+riskAmount = strategy.equity * (i_riskPercent / 100)
+
+
+// Calculate position size based on risk
+// Position Size = Risk Amount / Stop Loss Distance (in price)
+// For different asset types, we need to account for point value
+positionSize = slDistance > 0 ? riskAmount / slDistance : 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STRATEGY EXECUTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Long Entry
+if longCondition and strategy.position_size == 0 and positionSize > 0
+    slPrice = close - slDistance
+    tpPrice = close + tpDistance
+    strategy.entry("Long", strategy.long, qty=positionSize)
+    strategy.exit("Long Exit", "Long", stop=slPrice, limit=tpPrice)
+    tradesToday += 1
+
+// Short Entry
+if shortCondition and strategy.position_size == 0 and positionSize > 0
+    slPrice = close + slDistance
+    tpPrice = close - tpDistance
+    strategy.entry("Short", strategy.short, qty=positionSize)
+    strategy.exit("Short Exit", "Short", stop=slPrice, limit=tpPrice)
+    tradesToday += 1
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VISUAL ELEMENTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// 5M EMAs
+plot(i_showEmas ? emaFast : na, "9 EMA", color=color.yellow, linewidth=2)
+plot(i_showEmas ? emaSlow : na, "20 EMA", color=color.white, linewidth=2)
+
+// VWAP
+plot(i_showVwap ? vwapValue : na, "VWAP", color=color.purple, linewidth=2, style=plot.style_line)
+
+// Daily Open Price
+plot(i_showDailyOpen ? dailyOpen : na, "Daily Open", color=color.orange, linewidth=2, style=plot.style_line)
+
+// 1H 20 EMA Level
+plot(i_show1hEma ? ema1hSlow : na, "1H 20 EMA", color=color.blue, linewidth=2, style=plot.style_stepline)
+
+// Background color for bias and trading window
+bgColor = i_showBgBias ? (not tradingAllowed ? color.new(color.gray, 85) : 
+                          bullishBias ? color.new(color.green, 92) : 
+                          bearishBias ? color.new(color.red, 92) : na) : na
+bgcolor(bgColor)
+
+// Entry Signal Markers
+plotshape(longCondition, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(shortCondition, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INFO TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+
+if i_showTable
+    var table infoTable = table.new(position.top_right, 2, 11, bgcolor=color.new(color.black, 80), border_width=1)
+    
+    // Header
+    table.cell(infoTable, 0, 0, "PFK Alpha", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 60))
+    table.cell(infoTable, 1, 0, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 60))
+    
+    // 1H Bias
+    biasText = bullishBias ? "BULLISH" : bearishBias ? "BEARISH" : "NEUTRAL"
+    biasColor = bullishBias ? color.green : bearishBias ? color.red : color.gray
+    table.cell(infoTable, 0, 1, "1H Bias", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, biasText, text_color=biasColor, text_size=size.tiny)
+    
+    // VWAP Position
+    vwapText = aboveVwap ? "ABOVE" : "BELOW"
+    vwapColor = aboveVwap ? color.green : color.red
+    table.cell(infoTable, 0, 2, "VWAP", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, vwapText, text_color=vwapColor, text_size=size.tiny)
+    
+    // Trades Today
+    tradesText = str.tostring(tradesToday) + "/" + str.tostring(i_maxTradesDay)
+    tradesColor = canTradeToday ? color.green : color.red
+    table.cell(infoTable, 0, 3, "Trades", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 3, tradesText, text_color=tradesColor, text_size=size.tiny)
+    
+    // Risk Per Trade
+    riskText = str.tostring(i_riskPercent, "#.##") + "% ($" + str.tostring(riskAmount, "#.##") + ")"
+    table.cell(infoTable, 0, 4, "Risk", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 4, riskText, text_color=color.orange, text_size=size.tiny)
+    
+    // Position Size
+    posText = str.tostring(positionSize, "#.####")
+    table.cell(infoTable, 0, 5, "Pos Size", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, posText, text_color=color.orange, text_size=size.tiny)
+    
+    // SL Distance (ATR)
+    atrText = str.tostring(slDistance, format.mintick)
+    table.cell(infoTable, 0, 6, "SL Dist", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 6, atrText, text_color=color.yellow, text_size=size.tiny)
+    
+    // Trading Window Status
+    windowText = tradingAllowed ? "ACTIVE" : (isBlockedDate ? "HOLIDAY" : (not dayAllowed ? "DAY OFF" : "BLOCKED"))
+    windowColor = tradingAllowed ? color.green : color.red
+    table.cell(infoTable, 0, 7, "Window", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 7, windowText, text_color=windowColor, text_size=size.tiny)
+    
+    // Current Date (MMDD format for reference)
+    dateText = currentMMDD + (isBlockedDate ? " ❌" : "")
+    dateColor = isBlockedDate ? color.red : color.aqua
+    table.cell(infoTable, 0, 8, "Date", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 8, dateText, text_color=dateColor, text_size=size.tiny)
+    
+    // NY Hour (for debugging)
+    table.cell(infoTable, 0, 9, "NY Hour", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 9, str.tostring(nyHour), text_color=color.aqua, text_size=size.tiny)
+    
+    // Trading Hours Display
+    hoursText = str.tostring(i_tradeStart) + "-" + str.tostring(i_tradeEnd) + " EST"
+    table.cell(infoTable, 0, 10, "Hours", text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 1, 10, hoursText, text_color=color.aqua, text_size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(longCondition, "PFK Long Signal", "PFK Alpha: Long entry signal triggered")
+alertcondition(shortCondition, "PFK Short Signal", "PFK Alpha: Short entry signal triggered")
+alertcondition(bullishCross and bullishBias, "Bullish Cross (Aligned)", "5M bullish crossover aligned with 1H bias")
+alertcondition(bearishCross and bearishBias, "Bearish Cross (Aligned)", "5M bearish crossover aligned with 1H bias")

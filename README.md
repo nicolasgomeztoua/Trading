@@ -1,1 +1,0 @@
-# smc-trading-ndx

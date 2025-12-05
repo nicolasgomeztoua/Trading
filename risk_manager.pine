@@ -1,0 +1,106 @@
+//@version=5
+indicator("Futures Position Size Calculator", overlay=true)
+
+// Inputs
+instrument = input.string("ES", "Instrument", options=["YM", "MYM", "ES", "MES", "NQ", "MNQ", "RTY", "M2K", "CL", "MCL", "NG", "6E", "M6E", "GC", "MGC"])
+accountBalance = input.float(50000.0, "Account Balance ($)", minval=0.01, step=1.0)
+riskPercent = input.float(0.5, "Risk (%)", minval=0.0001, step=0.01)
+stopSizePoints = input.float(10.0, "Stop Size (points)", minval=0.1)
+
+// Tick values and tick sizes for supported instruments
+tickValue = 
+     instrument == "YM"  ? 5    : 
+     instrument == "MYM" ? 0.5  : 
+     instrument == "ES"  ? 12.5 : 
+     instrument == "MES" ? 1.25 : 
+     instrument == "NQ"  ? 5    : 
+     instrument == "MNQ" ? 0.5  : 
+     instrument == "RTY" ? 5    : 
+     instrument == "M2K" ? 0.5  : 
+     instrument == "CL"  ? 10   : 
+     instrument == "MCL" ? 1    : 
+     instrument == "NG"  ? 10   : 
+     instrument == "6E"  ? 12.5 : 
+     instrument == "M6E" ? 1.25 : 
+     instrument == "GC"  ? 10   : 
+     instrument == "MGC" ? 1    : na
+
+tickSize = 
+     instrument == "YM"  ? 1      : 
+     instrument == "MYM" ? 1      : 
+     instrument == "ES"  ? 0.25   : 
+     instrument == "MES" ? 0.25   : 
+     instrument == "NQ"  ? 0.25   : 
+     instrument == "MNQ" ? 0.25   : 
+     instrument == "RTY" ? 0.1    : 
+     instrument == "M2K" ? 0.1    : 
+     instrument == "CL"  ? 0.01   : 
+     instrument == "MCL" ? 0.01   : 
+     instrument == "NG"  ? 0.001  : 
+     instrument == "6E"  ? 0.0001 : 
+     instrument == "M6E" ? 0.0001 : 
+     instrument == "GC"  ? 0.1    : 
+     instrument == "MGC" ? 0.1    : na
+
+// Calculations
+stopSizeTicks = stopSizePoints / tickSize
+riskPerContract = stopSizeTicks * tickValue
+riskDollars = accountBalance * (riskPercent / 100.0)
+riskPerContractValid = not na(riskPerContract) and riskPerContract > 0
+fractionalContracts = riskPerContractValid ? riskDollars / riskPerContract : na
+contractsFloor = riskPerContractValid ? math.floor(fractionalContracts) : na
+contractsCeil = riskPerContractValid ? math.ceil(fractionalContracts) : na
+riskFloorDollars = not na(contractsFloor) ? contractsFloor * riskPerContract : na
+riskCeilDollars = not na(contractsCeil) ? contractsCeil * riskPerContract : na
+riskFloorPercent = accountBalance > 0 and not na(riskFloorDollars) ? (riskFloorDollars / accountBalance) * 100.0 : na
+riskCeilPercent = accountBalance > 0 and not na(riskCeilDollars) ? (riskCeilDollars / accountBalance) * 100.0 : na
+
+formatDollar(value) =>
+    na(value) ? "-" : "$" + str.tostring(value, "#.##")
+
+formatContracts(value, formatPattern) =>
+    na(value) ? "-" : str.tostring(value, formatPattern)
+
+formatDollarPercent(dollars, percent) =>
+    na(dollars) ? "-" : "$" + str.tostring(dollars, "#.##") + (na(percent) ? "" : " (" + str.tostring(percent, "#.##") + "%)")
+
+// Display results
+var table positionTable = table.new(position.top_right, 4, 6, bgcolor=color.new(color.black, 80)) // Darker background
+if barstate.islast
+    fractionalColor = not na(fractionalContracts) and fractionalContracts > 0 ? color.green : color.red
+    downColor = not na(contractsFloor) and contractsFloor > 0 ? color.green : color.red
+    upColor = not na(contractsCeil) and contractsCeil > 0 ? color.green : color.red
+    table.cell(positionTable, 0, 0, "Instrument", text_color=color.white)
+    table.cell(positionTable, 1, 0, instrument, text_color=color.white)
+    table.cell(positionTable, 2, 0, "Stop Size", text_color=color.white)
+    table.cell(positionTable, 3, 0, str.tostring(stopSizePoints, "#.##") + " pts", text_color=color.white)
+
+    table.cell(positionTable, 0, 1, "Account Balance", text_color=color.white)
+    table.cell(positionTable, 1, 1, formatDollar(accountBalance), text_color=color.white)
+    table.cell(positionTable, 2, 1, "Risk %", text_color=color.white)
+    table.cell(positionTable, 3, 1, str.tostring(riskPercent, "#.####") + "%", text_color=color.white)
+
+    table.cell(positionTable, 0, 2, "Dollar Risk", text_color=color.white)
+    table.cell(positionTable, 1, 2, formatDollar(riskDollars), text_color=color.white)
+    table.cell(positionTable, 2, 2, "Risk / Contract", text_color=color.white)
+    table.cell(positionTable, 3, 2, formatDollar(riskPerContract), text_color=color.white)
+
+    table.cell(positionTable, 0, 3, "Fractional Contracts", text_color=color.white)
+    table.cell(positionTable, 1, 3, formatContracts(fractionalContracts, "#.##"), text_color=fractionalColor)
+    table.cell(positionTable, 2, 3, "", text_color=color.white)
+    table.cell(positionTable, 3, 3, "", text_color=color.white)
+
+    table.cell(positionTable, 0, 4, "Rounded Down", text_color=color.white)
+    table.cell(positionTable, 1, 4, formatContracts(contractsFloor, "#"), text_color=downColor)
+    table.cell(positionTable, 2, 4, "Risk", text_color=color.white)
+    table.cell(positionTable, 3, 4, formatDollarPercent(riskFloorDollars, riskFloorPercent), text_color=color.white)
+
+    table.cell(positionTable, 0, 5, "Rounded Up", text_color=color.white)
+    table.cell(positionTable, 1, 5, formatContracts(contractsCeil, "#"), text_color=upColor)
+    table.cell(positionTable, 2, 5, "Risk", text_color=color.white)
+    table.cell(positionTable, 3, 5, formatDollarPercent(riskCeilDollars, riskCeilPercent), text_color=color.white)
+
+// Alert if no viable position size
+if barstate.islast and (na(fractionalContracts) or fractionalContracts <= 0)
+    label.new(bar_index, high, "Position size is 0\nIncrease risk % or reduce stop size", 
+              style=label.style_label_down, color=color.red, textcolor=color.white)
