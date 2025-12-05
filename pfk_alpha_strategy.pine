@@ -204,6 +204,7 @@ tpDistance = slDistance * i_rrRatio
 // Calculate risk amount in dollars
 riskAmount = strategy.equity * (i_riskPercent / 100)
 
+
 // Calculate position size based on risk
 // Position Size = Risk Amount / Stop Loss Distance (in price)
 // For different asset types, we need to account for point value
