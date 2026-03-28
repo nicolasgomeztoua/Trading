@@ -144,6 +144,7 @@ if newDay
     tradeDir       := 0
     tradedToday    := false
     fvgBox         := na
+    stateAtBarStart := STATE_WAIT_OPEN
     slLine         := na
     tpLine         := na
     entryLine      := na
@@ -217,6 +218,10 @@ lowestSinceTap() =>
 // STATE MACHINE
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Track previous state to prevent cascading (Pine doesn't have elif at top level)
+var int stateAtBarStart = STATE_WAIT_OPEN
+stateAtBarStart := state
+
 // --- STATE 0: Wait for session open ---
 if state == STATE_WAIT_OPEN
     if inWindow and not isBlockedDate
@@ -258,7 +263,8 @@ if state == STATE_SCAN_FVG and inWindow and not isBlockedDate
             fvgBox := box.new(bar_index[2], fvgZoneHi, bar_index, fvgZoneLo, border_color=color.new(color.red, 30), bgcolor=color.new(color.red, 85))
 
 // --- STATE 2: FVG found, monitor for setups ---
-if state == STATE_FVG_FOUND and not tradedToday
+// Only run if we were already in FVG_FOUND at bar start (prevents cascading from SCAN on same bar)
+if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not tradedToday
 
     // Extend FVG box visually
     if not na(fvgBox)
