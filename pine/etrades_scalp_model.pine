@@ -29,7 +29,6 @@ i_endMin    = input.int(0, "End Minute (NY)", minval=0, maxval=59, group="Time F
 
 // Advanced
 i_reversalLookback = input.int(30, "Reversal SL Lookback (bars)", minval=5, maxval=120, group="Advanced", tooltip="Number of bars to look back for HH/LL when calculating Setup 2 stop loss")
-i_minInversionPct  = input.float(50.0, "Min Inversion Depth (% of FVG)", minval=0, maxval=200, step=10, group="Advanced", tooltip="Close must exceed the FVG boundary by this % of the zone width. 0 = just beyond edge, 50 = half a zone-width past, 100 = full zone-width past.")
 
 // Blocked Dates
 i_useBlockedDates = input.bool(true, "Enable Blocked Dates", group="Blocked Dates")
@@ -301,14 +300,11 @@ if state == STATE_FVG_FOUND and not tradedToday
 
     // ─── SETUP 2: Reversal ───────────────────────────────────────────────
     // First FVG is inverted (candle closes beyond FVG in opposing direction)
-    // Requires close to exceed the zone boundary by minInversionPct % of the zone width
     if i_enableSetup2 and setupTriggered == 0
-        zoneWidth = fvgZoneHi - fvgZoneLo
-        invBuffer = zoneWidth * i_minInversionPct / 100.0
-        // Bullish FVG inverted: candle closes well below the bottom of the FVG zone
-        setup2Short = fvgDir == 1 and close < fvgZoneLo - invBuffer and bar_index > fvgBarIdx
-        // Bearish FVG inverted: candle closes well above the top of the FVG zone
-        setup2Long  = fvgDir == -1 and close > fvgZoneHi + invBuffer and bar_index > fvgBarIdx
+        // Bullish FVG inverted: candle closes below the bottom of the FVG zone
+        setup2Short = fvgDir == 1 and close < fvgZoneLo and bar_index > fvgBarIdx
+        // Bearish FVG inverted: candle closes above the top of the FVG zone
+        setup2Long  = fvgDir == -1 and close > fvgZoneHi and bar_index > fvgBarIdx
         if setup2Long
             entryPrice := close
             stopLoss   := lowestInRange(i_reversalLookback)
