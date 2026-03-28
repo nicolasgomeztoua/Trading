@@ -29,6 +29,7 @@ i_endMin    = input.int(0, "End Minute (NY)", minval=0, maxval=59, group="Time F
 
 // Advanced
 i_reversalLookback = input.int(30, "Reversal SL Lookback (bars)", minval=5, maxval=120, group="Advanced", tooltip="Number of bars to look back for HH/LL when calculating Setup 2 stop loss")
+i_minInversionPct  = input.float(50.0, "Min Inversion Depth (% of FVG)", minval=0, maxval=200, step=10, group="Advanced", tooltip="Close must exceed the FVG boundary by this % of the zone width. 0 = just beyond edge, 50 = half a zone-width past, 100 = full zone-width past.")
 
 // Blocked Dates
 i_useBlockedDates = input.bool(true, "Enable Blocked Dates", group="Blocked Dates")
@@ -111,6 +112,11 @@ var bool  tradedToday   = false
 // FVG box visual
 var box   fvgBox        = na
 
+// Trade visual lines
+var line slLine         = na
+var line tpLine         = na
+var line entryLine      = na
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DAILY RESET
@@ -139,6 +145,9 @@ if newDay
     tradeDir       := 0
     tradedToday    := false
     fvgBox         := na
+    slLine         := na
+    tpLine         := na
+    entryLine      := na
 
 // ══════════════════════════════════════════════════════════════════════════════
 // FVG DETECTION (standard 3-candle)
@@ -292,11 +301,14 @@ if state == STATE_FVG_FOUND and not tradedToday
 
     // ─── SETUP 2: Reversal ───────────────────────────────────────────────
     // First FVG is inverted (candle closes beyond FVG in opposing direction)
+    // Requires close to exceed the zone boundary by minInversionPct % of the zone width
     if i_enableSetup2 and setupTriggered == 0
-        // Bullish FVG inverted: candle closes below the bottom of the FVG zone
-        setup2Short = fvgDir == 1 and close < fvgZoneLo and bar_index > fvgBarIdx
-        // Bearish FVG inverted: candle closes above the top of the FVG zone
-        setup2Long  = fvgDir == -1 and close > fvgZoneHi and bar_index > fvgBarIdx
+        zoneWidth = fvgZoneHi - fvgZoneLo
+        invBuffer = zoneWidth * i_minInversionPct / 100.0
+        // Bullish FVG inverted: candle closes well below the bottom of the FVG zone
+        setup2Short = fvgDir == 1 and close < fvgZoneLo - invBuffer and bar_index > fvgBarIdx
+        // Bearish FVG inverted: candle closes well above the top of the FVG zone
+        setup2Long  = fvgDir == -1 and close > fvgZoneHi + invBuffer and bar_index > fvgBarIdx
         if setup2Long
             entryPrice := close
             stopLoss   := lowestInRange(i_reversalLookback)
@@ -399,6 +411,12 @@ if state == STATE_IN_TRADE and not tradedToday and strategy.position_size == 0
             strategy.exit("SHORT_EXIT", from_entry="SHORT_S" + str.tostring(setupTriggered), stop=stopLoss, limit=takeProfit)
         tradedToday := true
 
+        // SL/TP/Entry lines
+        if i_showSLTP
+            slLine    := line.new(bar_index, stopLoss, bar_index + 1, stopLoss, color=color.new(color.fuchsia, 0), width=2, style=line.style_solid)
+            tpLine    := line.new(bar_index, takeProfit, bar_index + 1, takeProfit, color=color.new(color.lime, 0), width=2, style=line.style_solid)
+            entryLine := line.new(bar_index, entryPrice, bar_index + 1, entryPrice, color=color.new(color.white, 30), width=1, style=line.style_dashed)
+
         // Labels
         if i_showLabels
             dirText = tradeDir == 1 ? "LONG" : "SHORT"
@@ -433,10 +451,14 @@ if state == STATE_SCAN_FVG and not inWindow
 // VISUALS
 // ══════════════════════════════════════════════════════════════════════════════
 
-// SL/TP lines while in position
-plot(i_showSLTP and strategy.position_size != 0 ? stopLoss : na, "Stop Loss", color=color.new(color.fuchsia, 0), linewidth=2, style=plot.style_linebr)
-plot(i_showSLTP and strategy.position_size != 0 ? takeProfit : na, "Take Profit", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
-plot(i_showSLTP and strategy.position_size != 0 ? entryPrice : na, "Entry", color=color.new(color.white, 0), linewidth=1, style=plot.style_linebr)
+// Extend SL/TP/Entry lines while trade is active
+if state == STATE_IN_TRADE and tradedToday and i_showSLTP
+    if not na(slLine)
+        line.set_x2(slLine, bar_index)
+    if not na(tpLine)
+        line.set_x2(tpLine, bar_index)
+    if not na(entryLine)
+        line.set_x2(entryLine, bar_index)
 
 // Background: dim outside trading window
 bgcolor(not inWindow ? color.new(color.gray, 93) : na)

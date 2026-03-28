@@ -40,10 +40,9 @@ def detect_fvg(candles: list[Candle], bar_index: int) -> FVG | None:
 
 
 def is_valid_session_fvg(fvg: FVG, session_start: time) -> bool:
-    """Check if FVG was confirmed during the session.
+    """The displacement candle (c2) must be at or after session start.
 
-    The scan only runs while in-window, so any detected FVG is valid.
-    This function is kept for API compatibility but always returns True
-    when called from the state machine (which already gates on in-window).
+    This blocks pre-market FVGs but allows the 9:30 candle to be c2 (the big move).
     """
-    return True
+    c2_time = fvg.candle2.timestamp.time()
+    return c2_time >= session_start
