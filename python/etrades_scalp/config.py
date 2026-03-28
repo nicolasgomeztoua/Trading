@@ -20,7 +20,8 @@ class BotConfig:
     use_demo: bool = True
 
     # Trading parameters
-    symbol: str = "NQ"
+    symbol: str = "MNQ"
+    max_contracts: int = 60
     account_id: int = 0
     risk_dollars: float = 250.0
     risk_pct: float = 1.0

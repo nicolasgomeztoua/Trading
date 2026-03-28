@@ -4,7 +4,7 @@ import logging
 
 from .config import BotConfig
 from .models import Direction, TradeSetup
-from .risk_manager import NQ_POINT_VALUE, calculate_contracts
+from .risk_manager import MNQ_POINT_VALUE, calculate_contracts
 from .tradovate_client import TradovateClient
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class OrderManager:
         symbol = self.config.symbol
 
         sl_dist = abs(setup.entry_price - setup.stop_loss)
-        risk_per = sl_dist * NQ_POINT_VALUE
+        risk_per = sl_dist * MNQ_POINT_VALUE
         total_risk = risk_per * contracts
 
         logger.info(
