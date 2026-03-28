@@ -111,6 +111,9 @@ var bool  tradedToday   = false
 // FVG box visual
 var box   fvgBox        = na
 
+// State cascade guard
+var int   stateAtBarStart = STATE_WAIT_OPEN
+
 // Trade visual lines
 var line slLine         = na
 var line tpLine         = na
@@ -219,7 +222,6 @@ lowestSinceTap() =>
 // ══════════════════════════════════════════════════════════════════════════════
 
 // Track previous state to prevent cascading (Pine doesn't have elif at top level)
-var int stateAtBarStart = STATE_WAIT_OPEN
 stateAtBarStart := state
 
 // --- STATE 0: Wait for session open ---
