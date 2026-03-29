@@ -29,6 +29,7 @@ i_endMin    = input.int(0, "End Minute (NY)", minval=0, maxval=59, group="Time F
 
 // Advanced
 i_reversalLookback = input.int(30, "Reversal SL Lookback (bars)", minval=5, maxval=120, group="Advanced", tooltip="Number of bars to look back for HH/LL when calculating Setup 2 stop loss")
+i_minContracts     = input.int(40, "Min Contracts (widens SL to fit)", minval=0, maxval=100, group="Advanced", tooltip="If the SL is too tight, widen it so at least this many contracts fit. 0 = disabled. Calculates min SL from instrument point value.")
 
 // Blocked Dates
 i_useBlockedDates = input.bool(true, "Enable Blocked Dates", group="Blocked Dates")
@@ -181,6 +182,27 @@ calcOrderQty(entryP, stopP) =>
     qty
 
 // ══════════════════════════════════════════════════════════════════════════════
+// MIN SL ADJUSTMENT: Widen SL if too tight for min contracts
+// Min SL = risk_dollars / (min_contracts * point_value)
+// ══════════════════════════════════════════════════════════════════════════════
+
+minSLDist() =>
+    if i_minContracts > 0 and i_sizeMode != "Fixed contracts"
+        riskCash = i_sizeMode == "Fixed $" ? i_riskDollars : (strategy.equity * i_riskPct / 100.0)
+        riskCash / (i_minContracts * syminfo.pointvalue)
+    else
+        0.0
+
+adjustSL(entryP, rawSL, isLong) =>
+    float sl = rawSL
+    minDist = minSLDist()
+    if minDist > 0
+        currentDist = math.abs(entryP - rawSL)
+        if currentDist < minDist
+            sl := isLong ? entryP - minDist : entryP + minDist
+    sl
+
+// ══════════════════════════════════════════════════════════════════════════════
 // HELPER: Find highest high / lowest low over N bars back
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -289,7 +311,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
         setup1Short = fvgDir == -1 and isBearFVG and bar_index > fvgBarIdx
         if setup1Long
             entryPrice := close
-            stopLoss   := fvgCandle1Lo  // low of first candle that started the sequence
+            stopLoss   := adjustSL(close, fvgCandle1Lo, true)
             if entryPrice > stopLoss
                 slDist     = entryPrice - stopLoss
                 takeProfit := entryPrice + slDist * i_tpMultiple
@@ -298,7 +320,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
                 state      := STATE_IN_TRADE
         if setup1Short and setupTriggered == 0
             entryPrice := close
-            stopLoss   := fvgCandle1Hi  // high of first candle that started the sequence
+            stopLoss   := adjustSL(close, fvgCandle1Hi, false)
             if entryPrice < stopLoss
                 slDist     = stopLoss - entryPrice
                 takeProfit := entryPrice - slDist * i_tpMultiple
@@ -315,7 +337,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
         setup2Long  = fvgDir == -1 and close > fvgZoneHi and bar_index > fvgBarIdx
         if setup2Long
             entryPrice := close
-            stopLoss   := lowestInRange(i_reversalLookback)
+            stopLoss   := adjustSL(close, lowestInRange(i_reversalLookback), true)
             if entryPrice > stopLoss
                 slDist     = entryPrice - stopLoss
                 takeProfit := entryPrice + slDist * i_tpMultiple
@@ -324,7 +346,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
                 state      := STATE_IN_TRADE
         if setup2Short and setupTriggered == 0
             entryPrice := close
-            stopLoss   := highestInRange(i_reversalLookback)
+            stopLoss   := adjustSL(close, highestInRange(i_reversalLookback), false)
             if entryPrice < stopLoss
                 slDist     = stopLoss - entryPrice
                 takeProfit := entryPrice - slDist * i_tpMultiple
@@ -340,17 +362,14 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
         bearFvgNotInverted = fvgDir == -1 and close <= fvgZoneHi
 
         // CISD detection (body-based, ignore wicks)
-        // Bullish CISD: current candle closes above the open of the preceding bearish candle
         prevIsBearish = close[1] < open[1]
         bullishCISD   = prevIsBearish and close > open[1]
-        // Bearish CISD: current candle closes below the open of the preceding bullish candle
         prevIsBullish = close[1] > open[1]
         bearishCISD   = prevIsBullish and close < open[1]
 
         if fvgDir == 1 and bullFvgNotInverted and bullishCISD
             entryPrice := close
-            // SL = lowest low within the retested FVG zone (from tap to now)
-            stopLoss   := lowestSinceTap()
+            stopLoss   := adjustSL(close, lowestSinceTap(), true)
             if entryPrice > stopLoss
                 slDist     = entryPrice - stopLoss
                 takeProfit := entryPrice + slDist * i_tpMultiple
@@ -359,8 +378,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
                 state      := STATE_IN_TRADE
         if fvgDir == -1 and bearFvgNotInverted and bearishCISD and setupTriggered == 0
             entryPrice := close
-            // SL = highest high within the retested FVG zone (from tap to now)
-            stopLoss   := highestSinceTap()
+            stopLoss   := adjustSL(close, highestSinceTap(), false)
             if entryPrice < stopLoss
                 slDist     = stopLoss - entryPrice
                 takeProfit := entryPrice - slDist * i_tpMultiple
@@ -371,13 +389,11 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
     // ─── SETUP 4: Tap & Engulf ───────────────────────────────────────────
     // FVG tapped, then candle closes beyond the full 3-candle formation (wicks included)
     if i_enableSetup4 and setupTriggered == 0 and fvgTapped and bar_index > fvgBarIdx
-        // Bullish FVG continuation: price closes above the highest high of the 3-candle formation
         setup4Long  = fvgDir == 1 and close > fvgFormHH
-        // Bearish FVG continuation: price closes below the lowest low of the 3-candle formation
         setup4Short = fvgDir == -1 and close < fvgFormLL
         if setup4Long
             entryPrice := close
-            stopLoss   := lowestSinceTap()
+            stopLoss   := adjustSL(close, lowestSinceTap(), true)
             if entryPrice > stopLoss
                 slDist     = entryPrice - stopLoss
                 takeProfit := entryPrice + slDist * i_tpMultiple
@@ -386,7 +402,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
                 state      := STATE_IN_TRADE
         if setup4Short and setupTriggered == 0
             entryPrice := close
-            stopLoss   := highestSinceTap()
+            stopLoss   := adjustSL(close, highestSinceTap(), false)
             if entryPrice < stopLoss
                 slDist     = stopLoss - entryPrice
                 takeProfit := entryPrice - slDist * i_tpMultiple
