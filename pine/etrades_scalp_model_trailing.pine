@@ -1,5 +1,5 @@
 //@version=5
-strategy("ETrades Scalp Model", overlay=true, calc_on_every_tick=false, process_orders_on_close=true,
+strategy("ETrades Scalp Model [Trailing]", overlay=true, calc_on_every_tick=false, process_orders_on_close=true,
      initial_capital=50000, default_qty_type=strategy.fixed, default_qty_value=1,
      pyramiding=0, commission_type=strategy.commission.cash_per_contract, commission_value=2.50,
      max_boxes_count=500, max_labels_count=500, max_lines_count=500)
@@ -19,7 +19,10 @@ i_sizeMode      = input.string("Risk %", "Position Sizing Mode", options=["Risk 
 i_riskPct       = input.float(1.0, "Risk Per Trade (%)", minval=0.1, maxval=10, step=0.1, group="Risk Management")
 i_riskDollars   = input.float(250.0, "Risk Per Trade ($)", minval=10, step=50, group="Risk Management")
 i_fixedContracts = input.int(1, "Fixed Contracts", minval=1, group="Risk Management")
-i_tpMultiple    = input.float(0.2, "Take Profit R Multiple", minval=0.1, maxval=10, step=0.1, group="Risk Management", tooltip="TP distance as multiple of SL distance. 0.2 = 20% of SL, 2.0 = 2x SL")
+
+// Trailing Stop
+i_trailStepR    = input.float(0.1, "Trail Step per Bar (R)", minval=0.01, maxval=1.0, step=0.01, group="Trailing Stop", tooltip="SL moves this many R toward price on each candle close")
+i_beR           = input.float(0.2, "Move to Breakeven at (R)", minval=0.01, maxval=2.0, step=0.01, group="Trailing Stop", tooltip="When price reaches this R in profit, SL moves to entry")
 
 // Time Filter
 i_startHour = input.int(9, "Start Hour (NY)", minval=0, maxval=23, group="Time Filter")
@@ -106,9 +109,11 @@ var int   fvgTapBar     = na      // bar_index when first tapped
 var int   setupTriggered = 0
 var float entryPrice    = na
 var float stopLoss      = na
-var float takeProfit    = na
+var float initialSL     = na      // original SL distance for R calculations
 var int   tradeDir      = 0       // +1 long, -1 short
 var bool  tradedToday   = false
+var bool  atBreakeven   = false
+var int   tradeEntryBar = na
 
 // FVG box visual
 var box   fvgBox        = na
@@ -118,7 +123,6 @@ var int   stateAtBarStart = STATE_WAIT_OPEN
 
 // Trade visual lines
 var line slLine         = na
-var line tpLine         = na
 var line entryLine      = na
 
 
@@ -145,13 +149,14 @@ if newDay
     setupTriggered := 0
     entryPrice     := na
     stopLoss       := na
-    takeProfit     := na
+    initialSL      := na
     tradeDir       := 0
     tradedToday    := false
+    atBreakeven    := false
+    tradeEntryBar  := na
     fvgBox         := na
     stateAtBarStart := STATE_WAIT_OPEN
     slLine         := na
-    tpLine         := na
     entryLine      := na
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -314,8 +319,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
             entryPrice := close
             stopLoss   := adjustSL(close, fvgCandle1Lo, true)
             if entryPrice > stopLoss
-                slDist     = entryPrice - stopLoss
-                takeProfit := entryPrice + slDist * i_tpMultiple
+                initialSL  := entryPrice - stopLoss
                 tradeDir   := 1
                 setupTriggered := 1
                 state      := STATE_IN_TRADE
@@ -323,8 +327,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
             entryPrice := close
             stopLoss   := adjustSL(close, fvgCandle1Hi, false)
             if entryPrice < stopLoss
-                slDist     = stopLoss - entryPrice
-                takeProfit := entryPrice - slDist * i_tpMultiple
+                initialSL  := stopLoss - entryPrice
                 tradeDir   := -1
                 setupTriggered := 1
                 state      := STATE_IN_TRADE
@@ -348,8 +351,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
                     break
             stopLoss := not na(swingLow) ? adjustSL(close, swingLow, true) : adjustSL(close, lowestInRange(i_reversalLookback), true)
             if not na(stopLoss) and entryPrice > stopLoss
-                slDist     = entryPrice - stopLoss
-                takeProfit := entryPrice + slDist * i_tpMultiple
+                initialSL  := entryPrice - stopLoss
                 tradeDir   := 1
                 setupTriggered := 2
                 state      := STATE_IN_TRADE
@@ -363,8 +365,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
                     break
             stopLoss := not na(swingHigh) ? adjustSL(close, swingHigh, false) : adjustSL(close, highestInRange(i_reversalLookback), false)
             if not na(stopLoss) and entryPrice < stopLoss
-                slDist     = stopLoss - entryPrice
-                takeProfit := entryPrice - slDist * i_tpMultiple
+                initialSL  := stopLoss - entryPrice
                 tradeDir   := -1
                 setupTriggered := 2
                 state      := STATE_IN_TRADE
@@ -386,8 +387,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
             entryPrice := close
             stopLoss   := adjustSL(close, lowestSinceTap(), true)
             if entryPrice > stopLoss
-                slDist     = entryPrice - stopLoss
-                takeProfit := entryPrice + slDist * i_tpMultiple
+                initialSL  := entryPrice - stopLoss
                 tradeDir   := 1
                 setupTriggered := 3
                 state      := STATE_IN_TRADE
@@ -395,8 +395,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
             entryPrice := close
             stopLoss   := adjustSL(close, highestSinceTap(), false)
             if entryPrice < stopLoss
-                slDist     = stopLoss - entryPrice
-                takeProfit := entryPrice - slDist * i_tpMultiple
+                initialSL  := stopLoss - entryPrice
                 tradeDir   := -1
                 setupTriggered := 3
                 state      := STATE_IN_TRADE
@@ -410,8 +409,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
             entryPrice := close
             stopLoss   := adjustSL(close, lowestSinceTap(), true)
             if entryPrice > stopLoss
-                slDist     = entryPrice - stopLoss
-                takeProfit := entryPrice + slDist * i_tpMultiple
+                initialSL  := entryPrice - stopLoss
                 tradeDir   := 1
                 setupTriggered := 4
                 state      := STATE_IN_TRADE
@@ -419,8 +417,7 @@ if state == STATE_FVG_FOUND and stateAtBarStart == STATE_FVG_FOUND and not trade
             entryPrice := close
             stopLoss   := adjustSL(close, highestSinceTap(), false)
             if entryPrice < stopLoss
-                slDist     = stopLoss - entryPrice
-                takeProfit := entryPrice - slDist * i_tpMultiple
+                initialSL  := stopLoss - entryPrice
                 tradeDir   := -1
                 setupTriggered := 4
                 state      := STATE_IN_TRADE
@@ -440,22 +437,22 @@ if state == STATE_IN_TRADE and not tradedToday and strategy.position_size == 0
     if qty > 0
         if tradeDir == 1
             strategy.entry("LONG_S" + str.tostring(setupTriggered), strategy.long, qty=qty)
-            strategy.exit("LONG_EXIT", from_entry="LONG_S" + str.tostring(setupTriggered), stop=stopLoss, limit=takeProfit)
+            strategy.exit("LONG_EXIT", from_entry="LONG_S" + str.tostring(setupTriggered), stop=stopLoss)
         else
             strategy.entry("SHORT_S" + str.tostring(setupTriggered), strategy.short, qty=qty)
-            strategy.exit("SHORT_EXIT", from_entry="SHORT_S" + str.tostring(setupTriggered), stop=stopLoss, limit=takeProfit)
-        tradedToday := true
+            strategy.exit("SHORT_EXIT", from_entry="SHORT_S" + str.tostring(setupTriggered), stop=stopLoss)
+        tradedToday   := true
+        tradeEntryBar := bar_index
 
-        // SL/TP/Entry lines
+        // SL/Entry lines
         if i_showSLTP
             slLine    := line.new(bar_index, stopLoss, bar_index + 1, stopLoss, color=color.new(color.fuchsia, 0), width=2, style=line.style_solid)
-            tpLine    := line.new(bar_index, takeProfit, bar_index + 1, takeProfit, color=color.new(color.lime, 0), width=2, style=line.style_solid)
             entryLine := line.new(bar_index, entryPrice, bar_index + 1, entryPrice, color=color.new(color.white, 30), width=1, style=line.style_dashed)
 
         // Labels
         if i_showLabels
             dirText = tradeDir == 1 ? "LONG" : "SHORT"
-            labelText = "S" + str.tostring(setupTriggered) + ": " + setupName + "\n" + dirText + " @ " + fmt(entryPrice) + "\nSL: " + fmt(stopLoss) + " | TP: " + fmt(takeProfit)
+            labelText = "S" + str.tostring(setupTriggered) + ": " + setupName + "\n" + dirText + " @ " + fmt(entryPrice) + "\nSL: " + fmt(stopLoss) + " | Trail: " + str.tostring(i_trailStepR, "#.##") + "R/bar"
             labelColor = tradeDir == 1 ? color.teal : color.red
             labelStyle = tradeDir == 1 ? label.style_label_up : label.style_label_down
             labelLoc   = tradeDir == 1 ? yloc.belowbar : yloc.abovebar
@@ -468,14 +465,55 @@ if state == STATE_IN_TRADE and not tradedToday and strategy.position_size == 0
             slDist = math.abs(entryPrice - stopLoss)
             riskPerContract = slDist * syminfo.pointvalue
             totalRisk = riskPerContract * qty
-            alertMsg = '{"action":"' + action + '","symbol":"' + sym + '","setup":"' + setupName + '","contracts":' + str.tostring(qty) + ',"entry":' + fmt(entryPrice) + ',"sl":' + fmt(stopLoss) + ',"tp":' + fmt(takeProfit) + ',"riskPerContract":' + str.tostring(riskPerContract, "#.##") + ',"totalRisk":' + str.tostring(totalRisk, "#.##") + ',"strategy":"etrades_scalp"}'
+            alertMsg = '{"action":"' + action + '","symbol":"' + sym + '","setup":"' + setupName + '","contracts":' + str.tostring(qty) + ',"entry":' + fmt(entryPrice) + ',"sl":' + fmt(stopLoss) + ',"riskPerContract":' + str.tostring(riskPerContract, "#.##") + ',"totalRisk":' + str.tostring(totalRisk, "#.##") + ',"strategy":"etrades_scalp_trailing"}'
             alert(alertMsg, alert.freq_once_per_bar_close)
 
         // Standard alert
-        alert("ETrades Scalp: S" + str.tostring(setupTriggered) + " " + setupName + " " + (tradeDir == 1 ? "LONG" : "SHORT") + " @ " + fmt(entryPrice) + " SL=" + fmt(stopLoss) + " TP=" + fmt(takeProfit), alert.freq_once_per_bar_close)
+        alert("ETrades Scalp [Trail]: S" + str.tostring(setupTriggered) + " " + setupName + " " + (tradeDir == 1 ? "LONG" : "SHORT") + " @ " + fmt(entryPrice) + " SL=" + fmt(stopLoss), alert.freq_once_per_bar_close)
 
-// Transition to DONE when position closes
-if state == STATE_IN_TRADE and tradedToday and strategy.position_size == 0
+// ══════════════════════════════════════════════════════════════════════════════
+// TRAILING STOP LOGIC (runs each bar while in trade)
+// ══════════════════════════════════════════════════════════════════════════════
+
+if state == STATE_IN_TRADE and tradedToday and strategy.position_size != 0 and not na(initialSL)
+    trailStep = initialSL * i_trailStepR  // 0.1R in price terms
+    beDist    = initialSL * i_beR          // 0.2R in price terms
+
+    if tradeDir == 1
+        currentProfit = close - entryPrice
+        // Breakeven check: if price reached 0.2R, lock SL to entry
+        if not atBreakeven and currentProfit >= beDist
+            atBreakeven := true
+            if stopLoss < entryPrice
+                stopLoss := entryPrice
+        // Trail: move SL up by 0.1R per bar, but never move it back down
+        if atBreakeven
+            newSL = stopLoss + trailStep
+            // Don't trail above current close (would immediately stop out)
+            if newSL < close
+                stopLoss := newSL
+    else
+        currentProfit = entryPrice - close
+        // Breakeven check
+        if not atBreakeven and currentProfit >= beDist
+            atBreakeven := true
+            if stopLoss > entryPrice
+                stopLoss := entryPrice
+        // Trail: move SL down by 0.1R per bar, but never move it back up
+        if atBreakeven
+            newSL = stopLoss - trailStep
+            // Don't trail below current close
+            if newSL > close
+                stopLoss := newSL
+
+    // Update the exit order with new SL
+    if tradeDir == 1
+        strategy.exit("LONG_EXIT", from_entry="LONG_S" + str.tostring(setupTriggered), stop=stopLoss)
+    else
+        strategy.exit("SHORT_EXIT", from_entry="SHORT_S" + str.tostring(setupTriggered), stop=stopLoss)
+
+// Transition to DONE when position closes (skip entry bar — position_size is still 0 due to process_orders_on_close)
+if state == STATE_IN_TRADE and tradedToday and strategy.position_size == 0 and bar_index > nz(tradeEntryBar, 0)
     state := STATE_DONE
 
 // If window expires while scanning and no FVG found
@@ -486,12 +524,12 @@ if state == STATE_SCAN_FVG and not inWindow
 // VISUALS
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Extend SL/TP/Entry lines while trade is active
+// Extend and update SL/Entry lines while trade is active
 if state == STATE_IN_TRADE and tradedToday and i_showSLTP
     if not na(slLine)
         line.set_x2(slLine, bar_index)
-    if not na(tpLine)
-        line.set_x2(tpLine, bar_index)
+        line.set_y1(slLine, stopLoss)
+        line.set_y2(slLine, stopLoss)
     if not na(entryLine)
         line.set_x2(entryLine, bar_index)
 
